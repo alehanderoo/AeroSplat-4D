@@ -1,0 +1,4 @@
+depth:
+  weight: 0.5
+  min_depth: 0.1
+  max_depth: 10.0

@@ -1,0 +1,422 @@
+\chapter{Related work}
+\label{chap:related_work}
+
+As mentioned in Chapter~\ref{chap:introduction}, this thesis integrates multiple components into an end-to-end pipeline for flying object detection and tracking.
+In this chapter, we review related work organized by technical component, highlighting key advances and identifying gaps that motivate our approach.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.95\textwidth]{img/overview.pdf}
+  \caption{Overview of the different components of the literature review to accommodate the proposed approach.}
+  \label{fig:overview}
+\end{figure}
+
+\section{Detection \& Tracking of Flying Objects}
+
+\subsection{Detection Paradigms: DBT vs. TBD}
+
+The choice between Detect-Before-Track (DBT) and Track-Before-Detect (TBD) paradigms depends on target resolution and signal-to-clutter ratios (SCR).
+DBT approaches dominate real-time applications; YOLO variants \cite{redmon_yolo_2016} and transformer-based detectors achieve inference speeds of 50--130 FPS on resolved targets.
+These architectures fail systematically when objects fall below 20 pixels or have backgrounds with high complexity (e.g. vegetation or buildings). 
+Deep feature downsampling reduces tiny targets to negligible information, while standard anchor designs miss objects smaller than $16\times16$ pixels entirely.
+While TBD methods excel at weak signals (SCR $\approx$ 1.5) by integrating multi-frame evidence, neither paradigm adequately leverages multi-view 3D constraints for robust aerial detection.
+
+\subsubsection{Background complexity dominates detection performance}
+
+The Drone-vs-Bird Detection Challenge, now in its 8th edition at IJCNN 2025, provides the most comprehensive benchmark for aerial object detection \cite{coluccia_drone-vs-bird_2025}.
+The 2025 winner achieved 73.7\% mAP using YOLOv11m with multi-scale processing, where input images are processed both as a whole and in overlapping segments to improve small drone detection.
+Background type dramatically affects detection accuracy: sky backgrounds yield median AP of 51\% with relatively consistent performance, vegetation backgrounds produce high variance (median 26\%, range 0--89\%), 
+while buildings and mixed backgrounds prove most challenging with median AP below 15\% \cite{coluccia_drone-vs-bird_2025}.
+This performance degradation in cluttered environments underscores the limitation of appearance-based methods when targets blend with textured backgrounds.
+
+\subsubsection{Approaches to improve small target detection}
+
+Super-resolution preprocessing offers one solution to address resolution limitations.
+Deep SR models applied prior to detection can enlarge images by a factor of 2, improving recall by up to 32.4\% when trained end-to-end with the detector \cite{magoulianitis_does_2019}.
+This approach effectively extends detection range. However, it requires additional processing steps and may introduce computational overhead that may conflict with real-time requirements.
+
+Spatiotemporal fusion provides an alternative strategy.
+Extending detector input to continuous image sequences with inter-frame optical flow enables extraction of motion features from small, weak targets \cite{sun_enhancing_2023}.
+This approach achieves 86.87\% average precision, representing an 11.49\% improvement over single-frame baselines while maintaining speeds above 30 FPS.
+The key insight is that temporal integration compensates for spatial bandwidth limitations, a principle our method extends to 3D Gaussian representations.
+
+\subsubsection{Track-Before-Detect for weak signal conditions}
+
+TBD approaches process unthresholded measurements over multiple frames before detection decisions, enabling tracking of targets below conventional SNR thresholds.
+Dynamic Programming TBD (DP-TBD) achieves detection probability exceeding 90\% at SCR = 1.5 with false alarm rates below 0.01\% \cite{barniv_dynamic_1985}.
+Multi-frame integration over 5--20 frames enables reliable detection when single-frame SCR falls below 3 dB.
+The computational complexity of $O(N \times V \times K)$ for N state cells, V velocity hypotheses, and K frames limits real-time feasibility without parallel implementations.
+
+Particle Filter TBD handles nonlinear motion through Sequential Monte Carlo methods \cite{salmond_particle_2001}.
+Generalized Labeled Multi-Bernoulli (GLMB) filters provide a theoretically optimal framework for multi-target tracking under weak signal conditions, with recent Belief Propagation variants achieving linear complexity \cite{meyer_message_2018}.
+Our volumetric voting approach draws from TBD principles but constrains the search space using multi-view geometry, reducing computational burden while maintaining sensitivity to weak signals.
+
+\subsubsection{The multi-view 3D constraint gap}
+
+All mainstream DBT architectures operate purely on single-view 2D images without native support for multi-view consistency, epipolar constraints, or 3D geometric priors.
+YOLO variants, Faster R-CNN, and DETR were designed and benchmarked exclusively on monocular imagery.
+
+Flight dynamics-based methods demonstrate the value of 3D constraints for aerial targets.
+Bundle adjustment with flight dynamics priors enables robust 3D trajectory reconstruction from multiple ground cameras without requiring perfect single-view tracking or appearance matching across views \cite{rozantsev_flight_2017}.
+Ad-hoc camera networks with unsynchronized, uncalibrated consumer cameras can achieve centimeter-accurate trajectory reconstruction when combined with rolling shutter correction \cite{li_reconstruction_2020}.
+
+Multi-view datasets with synchronized cameras and motion capture ground truth have recently emerged to support 3D drone tracking research.
+The DPJAIT dataset provides synchronized multi-camera video with Vicon-based 3D position ground truth in both real and simulated variants \cite{rosner_multimodal_2025}.
+Related work demonstrates YOLOv5 detection on synchronized multi-camera systems with motion capture reference, proposing centroid distance metrics specifically for 3D tracking evaluation \cite{lindenheim-locher_yolov5_2023}.
+MMAUD provides multi-modal data including stereo cameras, LiDAR, radar, and audio arrays for anti-UAV research \cite{yuan_mmaud_2024}.
+
+The CVPR 2024 UG2+ Challenge winner demonstrated feasibility of multi-modal 3D tracking using stereo vision, LiDAR, radar, and audio, achieving first place through dynamic points analysis and trajectory completion \cite{deng_multi-modal_2024}.
+
+\subsubsection{Conclusion: paradigm selection depends on operational requirements}
+
+DBT approaches deliver optimal performance for real-time detection of resolved targets ($>32$ pixels) at reasonable SNR ($>5$ dB), but performance degrades significantly with background complexity.
+Super-resolution and spatiotemporal fusion can extend detection range but add computational cost.
+TBD approaches become essential when targets fall below DBT thresholds, typically SCR $< 3$ dB (motion-blurred) or size $< 20$ pixels.
+
+Current paradigms largely neglect the geometric constraints offered by multi-view configurations, operating exclusively on monocular imagery.
+Our approach bridges this gap by combining the temporal integration principles of TBD with explicit 3D reconstruction, using multi-camera geometry to resolve weak signals that defeat single-view methods.
+
+
+\subsection{Foreground Segmentation}
+\label{subsec:foreground-segmentation}
+
+Detecting flying objects against sky backgrounds requires robust foreground extraction.
+Statistical background subtraction methods, including GMM~\cite{zivkovic_improved_2004, stauffer_adaptive_1999} and ViBe~\cite{bouwmans_background_2014}, model pixel intensity distributions to identify anomalies.
+While computationally efficient for static scenes, these approaches fail when cloud motion or illumination changes violate stationarity assumptions, generating false positives during weather shifts.
+Motion estimation offers an alternative, with classical optical flow~\cite{lucas1981iterative, farneback2003two} and deep learning variants like RAFT~\cite{teed_raft_2020} and SEA-RAFT~\cite{wang_sea-raft_2025} tracking pixel displacement.
+However, these methods struggle in textureless sky regions where correspondence is ambiguous, and deep methods incur high computational costs unsuitable for low-latency surveillance.
+
+Foundation models for segmentation, such as SAM~\cite{kirillov_segment_2023} and SAM 2~\cite{ravi_sam_2024}, achieve strong generalization but lack autonomy.
+These promptable (user interaction for selecting foreground) architectures require prior localization to generate masks, creating a circular dependency for detection tasks.
+Moreover, they prioritize salient object boundaries over the fine-grained details of small aerial targets, such as propellers or landing gear, which are essential for classification.
+
+\paragraph{Gap.}
+Current 2D segmentation methods operate independently per view, propagating errors that downstream 3D reasoning cannot correct.
+Missed detections or false positives in individual frames corrupt the final output.
+We address this by formulating foreground detection directly in 3D space, using a ray-marching voting scheme that accumulates multi-view evidence to resolve ambiguities before making detection decisions.
+
+
+
+
+
+
+
+
+\subsection{Multi-View Fusion Strategies}
+\label{subsec:multiview-fusion}
+
+The architectural decision of \textit{when} to fuse information (before or after detection) defines the fundamental trade-off between geometric consistency and computational efficiency.
+
+\paragraph{Early Fusion: 3D-First Representations.}
+Early fusion methods project 2D features into shared 3D representations, typically Bird's Eye View (BEV), to ensure geometric consistency by construction.
+Lift-Splat-Shoot (LSS)~\cite{vedaldi_lift_2020} pioneered explicit depth-based lifting, while BEVFormer~\cite{li_bevformer_2025} and BEVFusion~\cite{liu_bevfusion_2024} employ attention mechanisms to implicitly reason about 3D geometry from multi-view queries.
+Although recent optimizations like RCBEVDet~\cite{lin_rcbevdet_2024} achieve real-time performance, the memory overhead of dense voxel grids remains prohibitive for large surveillance volumes ($>500$m), and their reliance on ground-plane assumptions proves ill-suited for the aerial domain.
+
+\paragraph{Late Fusion: 2D-First Detection.}
+Late fusion approaches leverage mature 2D detectors to independently identify objects before aggregating them via triangulation.
+While this paradigm scales linearly with camera count and exploits abundant 2D training data, it suffers from irreversible error accumulation.
+Missed detections in one view cannot be recovered, and false positives triangulate to spurious ghosts.
+This brittleness is particularly fatal for small, distant flying objects that frequently fall below single-view detection thresholds against textureless skies.
+
+\paragraph{Volumetric Approaches.}
+Volumetric methods like space carving~\cite{kutulakos_theory_2000} and ray-marching voting avoid explicit feature matching by accumulating occupancy evidence directly in 3D.
+These approaches naturally handle textureless regions where photometric correspondence fails, but they lack the learned discriminative power of deep features and scale poorly with resolution.
+
+\paragraph{Gap.}
+A critical gap exists for flying object surveillance: BEV methods depend on ground planes and texture; late fusion fails on weak signals; and volumetric methods lack semantic representations.
+% We address this by combining ray-marching's geometry-aware accumulation with temporal aggregation, strengthening marginal detections in 3D before committing to occupancy decisions.
+
+
+
+
+
+
+
+
+\subsection{Multi-Object Tracking (MOT)}
+\label{subsec:mot}
+
+Multi-object tracking (MOT) extends single-frame detection to maintain consistent identities across time, evolving from purely geometric models to appearance-enhanced association. 
+The dominant tracking-by-detection paradigm, epitomized by SORT~\cite{bewley_simple_2016}, combines Kalman filtering with bipartite matching but fails under occlusion. 
+DeepSORT~\cite{wojke_simple_2017} addresses this by fusing motion with learned appearance embeddings, while ByteTrack~\cite{zhang_bytetrack_2022} improves association by recovering low-confidence detections. 
+Recent refinements like OC-SORT~\cite{cao_ocsort_2023} mitigate error accumulation during occlusion through observation-centric momentum, demonstrating that algorithmic improvements to classical components remain competitive.
+
+Transitioning to 3D, MVTrajecter~\cite{yamane_mvtrajecter_2025} lifts tracking to world coordinates by integrating multi-view evidence on datasets like Wildtrack~\cite{chavdarova_wildtrack_2018}. 
+End-to-end transformer architectures like TrackFormer~\cite{meinhardt_trackformer_2022} (extending DETR~\cite{carion_end--end_2020}) and MOTRv2~\cite{zhang_motrv2_2023} treat tracking as set prediction, though at higher computational cost. 
+In autonomous driving, methods like AB3DMOT~\cite{Weng2020_AB3DMOT_eccvw} and CenterPoint~\cite{yin_center-based_2021} adapt these paradigms to LiDAR data, while PF-Track~\cite{pang2023standing} and MUTR3D~\cite{zhang_mutr3d_2022} explore transformer-based 3D tracking from dense sensor inputs.
+
+\paragraph{Gap.}
+existing 3D MOT methods rely on dense sensor coverage or outward facing cameras. 
+Tracking small, distant targets against different backgrounds from sparse, upward-facing cameras precludes reliable appearance matching and standard 3D association. 
+% Our pipeline addresses this by performing track association in 3D space after ray-marching foreground segmentation, leveraging geometric consistency where appearance-based methods falter.
+
+% \subsection{Section Summary and Positioning}
+
+% TODO: Add summary of detection and tracking pillar and how thesis addresses identified gaps
+
+
+
+
+
+
+
+
+
+\section{3D Reconstruction Methods}
+The following section reviews existing methods for 3D reconstruction from multiple views with a focus on feed-forward architectures that can be used in real-time.
+
+\subsection{Classical Multi-View Reconstruction}
+\label{subsec:classical-mvr}
+
+Classical methods establish the geometric foundations of 3D reconstruction but struggle with the specific constraints of flying object surveillance.
+Pipelines like Structure from Motion (SfM) and Multi-View Stereo (MVS) (see Section~\ref{sec:background-mvg}) rely on the extraction and matching of local features (e.g., SIFT, ORB) to estimate poses and dense geometry.
+In textureless sky regions, these descriptors degenerate due to the lack of unique corners or edges, causing SfM pipelines to fail initialization and resulting in empty reconstructions.
+Volumetric approaches such as space carving~\cite{kutulakos_theory_2000} extend visual hulls (Section~\ref{subsec:visual-hulls}) to reason about occupancy without explicit correspondence, though they struggle with concavities and require precise segmentation.
+Despite their rigor, these approaches face critical limitations in our context: the iterative optimization required for bundle adjustment exceeds our 500ms latency target.
+Moreover, classical methods degrade significantly under sparse-view conditions ($N=5$) and cannot amortize computation across scenes, motivating the development of the data-driven neural priors explored in this thesis.
+
+\subsection{Neural Radiance Fields (NeRF)}
+\label{sec:nerf}
+
+While Neural Radiance Fields (see Section~\ref{sec:nerf_background}) revolutionized novel view synthesis, their application to flying object surveillance is hindered by prohibitive optimization times and sensitivity to sparse views.
+Generalizable variants like PixelNeRF~\cite{yu_pixelnerf_2021} and MVSNeRF~\cite{chen_mvsnerf_2021} attempted to eliminate per-scene optimization by conditioning on image features, while Instant-NGP~\cite{muller_instant_2022} achieved real-time training via hash encoding.
+However, these methods remain fundamentally limited in our scenario:
+\begin{itemize}
+    \item \textbf{Sparse-view degradation:} NeRFs typically require dense camera views (often $>50$) to resolve geometry. In our sparse setup ($N \approx 5$), they suffer from overfitting~\cite{niemeyer_regnerf_2022}.
+    \item \textbf{Texture dependence:} Photometric losses fail in textureless sky regions, leading to "floater" artifacts~\cite{warburg_nerfbusters_2023} where masses of density are hallucinated to satisfy training views without representing real geometry.
+    \item \textbf{Latency constraints:} The inference speed of volumetric ray-marching (seconds per frame) violates our sub-500ms latency requirement.
+    \item \textbf{Small object sampling:} Stratified sampling misses fine details of distant objects ($<20$ pixels).
+\end{itemize}
+These limitations necessitate the explicit, point-based representations offered by 3D Gaussian Splatting.
+
+
+\subsection{3D Gaussian Splatting Revolution}
+\label{sec:3dgs-revolution}
+
+The emergence of 3D Gaussian Splatting (3DGS) \cite{kerbl_3d_2023} represents a paradigm shift in neural scene representation, optimizing anisotropic primitives for real-time rendering.
+While achieving speedups of 20$\times$ over NeRF, the requirement for per-scene optimization precludes direct application to novel scenes without retraining.
+
+\subsubsection{Feed-Forward Generalizable Architectures}
+To address this bottleneck, feed-forward architectures predict Gaussian parameters directly from input images.
+We categorize these methods based on their geometric priors and alignment with surveillance constraints (see Appendix \ref{appendix:feedforward-3dgs} for a detailed taxonomy).
+
+\paragraph{Pixel-Aligned and Probabilistic Methods.}
+Pixel-aligned approaches like pixelSplat \cite{charatan_pixelsplat_2024} and Splatter Image \cite{szymanowicz_splatter_2024} predict primitives via image-to-image translation or probabilistic depth estimation.
+While pixelSplat handles depth ambiguity through discrete probability distributions, it produces floating artifacts in textureless regions where all depth hypotheses appear equally valid.
+Single-view methods like SAM 3D \cite{meta_sam_3d_2025} rely heavily on learned priors, risking geometric hallucination that corrupts downstream classification.
+
+\paragraph{Cost-Volume and Dual-Branch Architectures.}
+Cost-volume methods such as MVSplat \cite{chen_mvsplat_2025} and GPS-Gaussian \cite{zheng_gps-gaussian_2024} enforce geometric consistency through multi-view plane sweeping.
+MVSplat achieves efficient reconstruction (22 FPS) but degrades against uniform sky backgrounds where photometric variance vanishes.
+DepthSplat \cite{Xu_2025_depthsplat} resolves this by fusing multi-view cost volumes with monocular depth priors (Depth Anything V2).
+This dual-branch design provides a critical fallback: the monocular branch maintains structure when stereo matching fails in textureless regions, while the multi-view branch refines geometry where correspondence exists.
+Recent recurrent approaches like ReSplat achieve state-of-the-art fidelity through iterative error feedback, though they currently lack open implementations.
+
+\paragraph{Transformer-Based Large Models.}
+Large Reconstruction Models (LRMs) like GS-LRM \cite{zhang_gs-lrm_2024} process tokenized images through massive transformer blocks.
+While powerful, these models are trained on object-centric datasets (Objaverse) with close-range targets filling the frame.
+This distribution mismatch renders them ineffective for aerial surveillance, where distant flying objects appear with limited spatial resolution, often falling below the effective capacity of standard patch tokenization.
+
+\paragraph{Textureless and Sparse-View Limitations.}
+Modern architectures exhibit fundamental limitations when applied to isolated objects against featureless backgrounds.
+Methods relying on explicit geometric initialization, such as GaussianPro \cite{cheng_gaussianpro_2024} and ProSplat \cite{lu_prosplat_2025}, fail catastrophically in sky regions where SfM cannot produce initialization points.
+Similarly, pure cost-volume methods suffer from depth ambiguity without texture gradients.
+Diffusion-based reconstruction methods are explicitly rejected for our pipeline; while visually plausible, they hallucinate unobserved geometry, introducing features that do not exist in the input.
+For classification tasks, this fabrication corrupts the feature space; we require architectures like DepthSplat that represent only observable geometry.
+
+\paragraph{Conclusion.}
+The surveyed methods systematically fail under the specific conditions of flying object classification: textureless backgrounds, wide baselines, and small distant targets.
+We address this by adopting DepthSplat's dual-branch architecture, which combines the robustness of monocular priors with the geometric fidelity of multi-view constraints.
+As detailed in Appendix \ref{appendix:feedforward-3dgs}, we further augment this with silhouette consistency loss to anchor geometry in textureless regions.
+
+
+
+
+
+
+
+
+
+
+\subsection{Dynamic and 4D Gaussian Splatting}
+\label{sec:dynamic-4dgs}
+
+Dynamic Gaussian splatting extends the 3DGS paradigm to model temporal evolution through two fundamental approaches.
+Deformation based methods such as 4D Gaussian Splatting~\cite{wu_4d_2024} decompose spacetime into HexPlane feature planes, where a lightweight MLP predicts per Gaussian deformations $(\Delta\mu, \Delta q, \Delta s)$ conditioned on time, achieving 82 FPS at 800$\times$800 resolution.
+Native 4D methods take a different approach: 4D Rotor Gaussian Splatting~\cite{duan_4d-rotor_2024} represents primitives as anisotropic XYZT Gaussians using geometric algebra rotors, obtaining 3D Gaussians through temporal slicing at each timestamp and reaching 277 FPS.
+Subsequent work addresses efficiency: Hybrid 3D-4D Gaussian Splatting~\cite{oh_hybrid_2025} converts temporally invariant Gaussians from 4D to 3D during training based on temporal scale thresholds, while 4DGS-1K~\cite{yuan_1000_2025} eliminates short lifespan Gaussians and skips inactive primitives during rasterization to achieve 1000+ FPS with 41$\times$ storage reduction.
+Despite these advances, all methods share two fundamental characteristics: they require iterative per scene optimization rather than feed forward inference, and they target novel view synthesis quality exclusively.
+
+\todo{Discuss Feed-Forward 4DGS, but that all methods use feed forward per X frames and then interpolate in some way}
+
+\paragraph{Gap.}
+No existing 4D Gaussian method extracts temporal motion patterns as discriminative features for downstream tasks.
+The deformation fields and rotor parameters encoding Gaussian translation and rotation remain untapped signal sources.
+For flying object discrimination, where drones exhibit rigid body motion and birds display periodic wing deformation, these temporal dynamics provide powerful classification cues beyond static appearance.
+This thesis addresses this gap by treating 4D Gaussian dynamics not as a rendering mechanism but as a feature space for classification.
+
+
+\subsection{Section Summary and Positioning}
+The works of 3D reconstruction going from classical Structure from Motion to feed-forward Gaussian Splatting demonstrates a clear trend toward improved fidelity and efficiency.
+Despite these advances, a significant division persists.
+Traditional methods provide precise geometry but struggle in scenes that lack sufficient texture or scale.
+Conversely, neural approaches remain robust in textureless areas through learned priors yet often generate artificial geometry when cameras are widely separated.
+Effective aerial surveillance demands a hybrid strategy.
+This approach must leverage the geometric constraints of multiple cameras to locate small objects while utilizing Gaussian Splatting to model their shape and appearance efficiently.
+Our thesis builds upon DepthSplat and adapts it to be retrained for reconstruction centered on objects from multiple views.
+
+
+
+
+
+\section{Classification from 3D Representations}
+
+\subsection{Point Cloud Processing Architectures}
+\label{sec:point-cloud-architectures}
+
+Processing unordered 3D point sets presents a fundamental challenge for neural networks due to the lack of regular grid structure.
+Since 3D Gaussian representations share this unstructured nature, point cloud methods provide relevant architectural foundations.
+PointNet \cite{charles_pointnet_2017} pioneered direct processing of raw point clouds by combining per point MLPs with symmetric aggregation functions.
+Building on this, PointNet++ \cite{qi_pointnet_2017} introduced hierarchical processing to capture local geometric patterns through recursive abstraction.
+Point Transformer \cite{zhao_point_2021} and its serialized successor V3 \cite{wu_point_2024} further advanced the field by applying self attention mechanisms to model complex dependencies.
+
+\paragraph{Classification on Gaussian Representations.}
+ShapeSplat \cite{ma_shapesplat_2025} adapts these principles to 3D Gaussian splatting by jointly processing geometric and appearance properties.
+Their findings confirm that effective classification requires the full Gaussian parameters rather than reduced centroid proxies.
+However, a critical gap remains as these architectures operate on static snapshots and ignore temporal dynamics.
+For flying objects where motion signatures like wing flapping are discriminative, purely static processing yields suboptimal results.
+This limitation necessitates architectures capable of jointly reasoning over Gaussian geometry, appearance, and temporal evolution.
+
+
+
+
+\subsection{Set Processing and Gaussian Tokenization}
+\label{sec:set-processing}
+
+Gaussian representations inherently constitute unordered sets of variable cardinality, requiring permutation-invariant architectures for classification.
+DeepSets \cite{zaheer_deep_2017} established that permutation invariance can be achieved via sum-pooling individual element encodings, though this aggregation discards critical pairwise relationships.
+To capture these interactions, the Set Transformer \cite{lee_set_2019} introduced self-attention mechanisms, utilizing inducing points to reduce quadratic complexity to $O(nm)$ for tractability.
+The Perceiver \cite{jaegle_perceiver_2021} further refined this by mapping variable-size inputs to fixed-size latent arrays via iterative cross-attention, enabling modality-agnostic processing.
+% We extend these frameworks by treating each Gaussian as a high-dimensional token encoding position $\boldsymbol{\mu}$, scale $\mathbf{s}$, rotation $\mathbf{q}$, opacity $\alpha$, and spherical harmonics.
+% Concatenating these parameters yields a 59-dimensional feature vector for degree-3 harmonics.
+
+\paragraph{Gap.}
+However, no established paradigm exists for Gaussian-based classification.
+Existing set architectures, developed for point clouds or multimodal inputs, fail to exploit the unique geometric structure and temporal evolution of Gaussian primitives.
+% We address this by developing a tokenization scheme that explicitly captures both the geometric richness of individual Gaussians and their collective dynamics.
+
+
+
+
+\subsection{Temporal Sequence Modeling}
+\label{subsec:temporal_modeling}
+
+State Space Models (SSMs) have emerged as the leading architecture for 3D and 4D point cloud sequence modeling, achieving up to 92.6\% accuracy on challenging benchmarks while offering linear complexity $O(N)$.
+This contrasts sharply with the quadratic complexity $O(N^2)$ of transformers, which limits their applicability in edge computing scenarios.
+The evolution of sequence modeling reveals a clear trajectory toward architectures that balance global context with computational efficiency.
+Classical Recurrent Neural Networks (RNNs) and Long Short-Term Memory (LSTM) networks suffer from sequential bottlenecks and gradient instability, limiting their effective context window.
+While Temporal Convolutional Networks (TCNs) introduced parallelization, they remain constrained by fixed receptive fields.
+The transformer revolution, exemplified by TimeSformer \cite{bertasius_is_2021}, achieved high accuracy through factorized space-time attention.
+However, its quadratic complexity creates prohibitive memory pressure. 
+ 
+The Mamba architecture~\cite{gu_linear-time_2024} fundamentally reconceptualizes this landscape by introducing selective state space models with linear complexity.
+By making parameters input-dependent, Mamba enables content-based reasoning while maintaining the efficiency of global convolutions.
+Its hardware-aware selective scan algorithm fuses operations in GPU SRAM, reducing memory I/O by $O(N)$ and achieving inference throughput 5 times higher than equivalent transformers.
+This architecture extrapolates perfectly to sequences exceeding 1 million tokens, a capability unmatched by attention-based models.
+
+Adapting this to 3D data, PointMamba~\cite{liang_pointmamba_2024} utilizes Hilbert space-filling curves to serialize unordered point clouds, outperforming transformers with significantly fewer parameters.
+Addressing the lack of local features, Mamba3D \cite{han_span_2024} introduces Bidirectional SSMs and Local Norm Pooling, achieving 92.6\% accuracy on ScanObjectNN.
+For 4D video understanding, Mamba4D \cite{Liu_mamba4D_2025} disentangles spatial and temporal modeling, demonstrating a 10.4\% accuracy improvement over P4Transformer \cite{fan_point_2021} on long sequences while reducing GPU memory usage by 87.5\%.
+This linear scaling and constant memory requirement $O(D \cdot N)$ make SSMs the optimal choice for real-time edge deployment in aerial surveillance where longer frame sequences can be used to capture temporal dynamics.
+
+
+
+
+\subsection{SE(3) Equivariance for 3D Data}
+\label{sec:se3_equivariance}
+
+SE(3) equivariant neural networks ensure that outputs transform predictably under 3D rigid body transformations, eliminating the need for extensive data augmentation.
+While standard augmentation attempts to cover the continuous SO(3) manifold through random sampling, it provides no theoretical guarantees and often fails to generalize to unseen orientations.
+Equivariant architectures solve this by baking geometric symmetry directly into the network structure, sharing weights across all possible rotations.
+
+\subsubsection{The Trade-off: Expressivity vs. Efficiency}
+
+The landscape of equivariant methods is defined by a fundamental trade-off between computational cost and representational power.
+Spherical harmonic methods, including Tensor Field Networks (TFN) \cite{thomas_tensor_2018} and SE(3) Transformers \cite{fuchs_se3-transformers_2020}, achieve high expressivity by constraining filters to products of radial functions and spherical harmonics.
+Equiformer \cite{liao_equiformer_2023} advances this further with nonlinear message passing, achieving state of the art accuracy on molecular dynamics tasks.
+However, these gains come at a prohibitive cost; the required tensor products scale as $O(L^6)$ or $O(L^3)$, making them 10 to 100 times slower than scalar networks and unsuitable for edge deployment.
+
+Conversely, lightweight architectures prioritize inference speed by avoiding complex basis functions.
+Vector Neurons \cite{deng_vector_2021} extend standard operations to 3D vector spaces, enabling SO(3) equivariance with only a small constant overhead over PointNet.
+Building on this foundation, VN-Transformer \cite{assaad_vn-transformer_2023} introduces rotation equivariant attention through Frobenius inner products between vector representations, achieving 90.8\% accuracy on ModelNet40 \todo{modelnet40}.
+For efficient processing of large point clouds, VN-Transformer employs VN-MeanProject, a permutation invariant downsampling operation that reduces self-attention complexity from $O(N^2C)$ to $O(M^2C')$ where $M \ll N$.
+Crucially, VN-Transformer supports early fusion of non-spatial attributes (such as opacity and color) by extending features from $C \times 3$ to $C \times (3 + d_A)$ matrices, directly applicable to the heterogeneous attributes of 3D Gaussians.
+This combination of parameter efficiency, scalable attention, and attribute fusion makes VN-Transformer the most viable candidate for downstream tasks such as real-time Gaussian classification.
+
+
+\subsubsection{Gap in Aerial Object Detection}
+
+Despite the inherent 3D nature of flying objects, SE(3) equivariant methods remain virtually unexplored in the domain of drone and bird detection.
+Current systems rely on standard CNNs or Transformers that struggle to generalize across arbitrary viewing angles or backgrounds without massive datasets.
+This represents a critical gap; applying equivariant architectures could enable significant robustness for classifying aerial targets that are randomly oriented relative to ground-based sensors.
+
+
+
+\subsection{Motion Signatures for Drone-Bird Discrimination}
+
+Radar micro-Doppler research has established that motion signatures provide highly discriminative features for drone-bird classification.
+The fundamental discriminator is the frequency difference between drone rotor rotation ($>$50 Hz) and bird wing flapping (4--6 Hz)~\cite{rahman_radar_2018}.
+Molchanov et al.~\cite{molchanov_classification_2014} achieved 92\% accuracy using eigenpair features extracted from micro-Doppler signatures, 
+while Rahman and Robertson~\cite{rahman_classification_2020} reported 99\% accuracy using CNNs on spectrogram images.
+
+Despite radar's success, vision-based methods remain dominated by appearance-based deep learning with limited exploitation of temporal motion cues.
+Akyon et al.~\cite{akyon_sequence_2022} demonstrated that adding LSTM/Transformer temporal fusion to video features improves bird classification F1-score by 73\%, confirming that motion information provides substantial discriminative value even from RGB imagery. 
+Similarly, Sun et al.~\cite{sun_enhancing_2023} utilized spatiotemporal information and optical flow to enhance UAV detection in surveillance videos.
+
+\paragraph{Gap and Opportunity.}
+While radar can directly measure Doppler frequencies, standard video frame rates (30--60 fps) cannot capture high-frequency rotor motion but \emph{can} resolve wing flapping frequencies (4--10 Hz).
+No existing work extracts discriminative motion signatures from 3D representations.
+We aim to extract discriminative motion signatures (frequency, periodicity) from dynamic gaussians to address the limitations of appearance-only methods, exploiting the theoretical feasibility of capturing wing flapping frequencies (4-10 Hz) at standard frame rates.
+
+% \subsection{Section Summary and Positioning}
+
+
+
+
+
+
+
+
+
+
+\section{Chapter Summary and Research Gaps}
+\label{sec:related_work_summary}
+
+This chapter has reviewed the three technical pillars underpinning our research: flying object detection, 3D reconstruction, and temporal classification. 
+Across these domains, we observe a recurring pattern: methods are optimized for either close-range, texture-rich environments (automotive, indoor) or single-view 2D tasks. 
+The specific intersection of constraints in our problem setting (sparse wide-baseline views, textureless sky backgrounds, and small dynamic targets) exposes fundamental gaps in the state of the art.
+
+Table~\ref{tab:research_gaps} summarizes these identified gaps and maps them to the specific methodological contributions of this thesis.
+
+\begin{table}[h]
+\centering
+\caption{Summary of identified research gaps and thesis contributions.}
+\label{tab:research_gaps}
+\begin{tabular}{|p{0.45\textwidth}|p{0.45\textwidth}|}
+\hline
+\textbf{Identified Research Gap} & \textbf{Thesis Contribution} \\
+\hline
+\textbf{Detection:} TBD paradigms accumulate evidence but lack multi-view 3D awareness; DBT methods fail on low-SNR targets. & A multi-view ray-marching voting mechanism that accumulates foreground evidence in 3D space before detection. \\
+\hline
+\textbf{Reconstruction:} Feed-forward Gaussian Splatting assumes textured scenes and bounded objects; fails on sky backgrounds and wide baselines. & An adapted feed-forward architecture that leverages cost-volume geometry to reconstruct isolated targets against featureless backgrounds. \\
+\hline
+\textbf{Classification:} No existing paradigm for classifying 4D Gaussian sequences; point cloud methods ignore appearance/opacity. & A novel 4D Gaussian tokenization scheme combined with SE(3)-equivariant processing. \\
+\hline
+\textbf{Dynamics:} Temporal evolution of Gaussian parameters (deformation, rotation) is unexploited for discrimination. & A temporal State Space Model (Mamba) that extracts motion signatures from Gaussian trajectories. \\
+\hline
+\textbf{Data:} Lack of synchronized multi-view datasets with 3D ground truth for aerial targets. & A synthetic dataset generation pipeline using NVIDIA Isaac Sim to bridge the data gap. \\
+\hline
+\end{tabular}
+\end{table}
+
+The following chapter presents our methodology, detailing how we synthesize these contributions into an end-to-end pipeline that addresses each identified limitation.

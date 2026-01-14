@@ -1,0 +1,611 @@
+% \chapter{\label{cha:method}Method: 3D/4D Gaussian Pipeline for Flying Object Classification}
+
+% This chapter presents the complete end-to-end pipeline for multi-camera detection, reconstruction, classification, and tracking of flying objects. Building on the design rationale established in Chapter~\ref{cha:design_rationale}, we describe each component in detail:
+
+% \begin{enumerate}
+%   \item Synthetic data generation using Isaac Sim (Section~\ref{sec:synthetic_data})
+%   \item Multi-camera track-before-detect segmentation (Section~\ref{sec:tbd_segmentation})
+%   \item Feed-forward 3D/4D Gaussian reconstruction (Section~\ref{sec:gaussian_reconstruction})
+%   \item SE(3)-equivariant temporal classification (Section~\ref{sec:classification_architecture})
+%   \item Trajectory-based camera pose refinement (Section~\ref{sec:pose_refinement})
+%   \item Multi-object tracking and re-identification (Section~\ref{sec:tracking})
+% \end{enumerate}
+
+% Figure~\ref{fig:pipeline_overview} provides a high-level overview of the complete system.
+
+% \begin{figure}[h]
+%   \centering
+%   \includegraphics[width=1\linewidth]{img/pipeline_18-11-25.png}
+%   % \fbox{\parbox{.95\linewidth}{\centering [PLACEHOLDER: Complete pipeline diagram]\\
+%   % Multi-view RGB $\rightarrow$ TBD Segmentation $\rightarrow$ 3D/4D Gaussian Reconstruction $\rightarrow$ SE(3)-Equivariant Encoder $\rightarrow$ Temporal Transformer $\rightarrow$ Classification\\
+%   % $\downarrow$ 3D Trajectories $\rightarrow$ Pose Refinement (feedback loop)}}
+%   \caption{End-to-end pipeline overview.}
+%   \label{fig:pipeline_overview}
+% \end{figure}
+
+
+% \section{Synthetic Data for Domain Transfer}\label{sec:synthetic-data}
+
+% Training deep learning systems for flying object classification presents a fundamental data acquisition challenge. 
+% Collecting real-world multi-view datasets with synchronized RGB streams, accurate 3D ground truth trajectories, and balanced class distributions is prohibitively expensive and operationally complex. 
+% Modern simulation platforms offer a compelling alternative: generating unlimited training data with perfect annotations in controlled virtual environments.
+
+% \subsection{The Simulation-to-Real Gap}
+
+% Simulation-to-real (sim-to-real) transfer refers to the challenge of deploying models trained on synthetic data to real-world scenarios. 
+% Despite advances in physically-based rendering, systematic differences persist between simulated and real images. These differences manifest across multiple dimensions.
+
+% \textbf{Visual discrepancies} arise from imperfect modeling of optical phenomena. 
+% Simulated images may lack subtle effects such as chromatic aberration, sensor noise characteristics, atmospheric scattering, and the complex reflectance properties of real materials. 
+% Even high-fidelity renderers produce images with statistical distributions that differ from camera captures.
+
+% \textbf{Physical discrepancies} emerge from simplified dynamics models. 
+% Simulated bird wing articulation, drone rotor motion blur, and object trajectories under wind disturbance rarely capture the full complexity of real-world physics. 
+% These differences propagate to motion-based features that a temporal classifier must interpret.
+
+% \textbf{Distribution shift} occurs when the simulated scenarios fail to represent the true variability of deployment conditions. 
+% A model trained on clear-sky simulations may struggle with overcast conditions, while one trained on specific drone models may fail to generalize to novel designs.
+
+% Addressing these gaps requires deliberate strategies during both data generation and model training.
+
+% \subsection{Domain Randomization}
+
+% Domain randomization counters overfitting to simulation-specific artifacts by deliberately introducing variability across all controllable parameters. 
+% The principle is counterintuitive: rather than striving for maximal realism, we introduce sufficient variation that the real world becomes merely another sample from the training distribution.
+
+% Effective randomization operates across several axes:
+
+% \begin{itemize}
+%     \item \textbf{Visual parameters:} Lighting intensity and direction, sky appearance (color gradients, cloud patterns), object textures and materials, camera exposure and white balance settings.
+%     \item \textbf{Geometric parameters:} Object scales within plausible ranges, camera poses and orientations, flight trajectory characteristics (altitude, speed, curvature).
+%     \item \textbf{Sensor parameters:} Lens distortion coefficients, motion blur magnitude, noise levels, minor calibration perturbations in intrinsic and extrinsic matrices.
+%     \item \textbf{Scene composition:} Background elements (trees, buildings, terrain), number and variety of distractor objects, atmospheric conditions.
+% \end{itemize}
+
+% The key insight is that features robust to extensive synthetic variation often transfer well to real-world conditions. If a classifier correctly identifies drones across randomized lighting, textures, and camera parameters in simulation, it likely captures intrinsic geometric and motion properties rather than simulation-specific artifacts.
+
+% \subsection{Benefits of Simulation-Based Training}
+
+% Beyond addressing data scarcity, simulation offers unique advantages for developing flying object classification systems.
+
+% \textbf{Perfect ground truth.} Simulators provide exact 3D positions, velocities, and object identities at every timestep. 
+% This precision enables supervised training of components that would otherwise require expensive manual annotation or unreliable automated labeling.
+
+% \textbf{Safety and reproducibility.} Testing edge cases such as close approaches, rapid maneuvers, and multi-object interactions carries no physical risk. 
+% Scenarios can be exactly replicated for debugging and ablation studies.
+
+% \textbf{Class balance control.} Real-world data collection yields imbalanced distributions reflecting natural encounter rates. 
+% Simulation allows generating precisely balanced datasets or deliberately oversampling challenging scenarios.
+
+% \textbf{Scalability.} Once a simulation pipeline is established, generating additional training data incurs primarily computational cost. 
+% This enables scaling dataset size to match model capacity.
+
+% \paragraph{Thesis Connection.}
+% The synthetic data generation pipeline built on NVIDIA Isaac Sim directly applies these principles. 
+% By randomizing environmental conditions, camera effects, object appearances, and flight dynamics, we generate training data designed to transfer to real-world multi-camera deployments. 
+% Section~\ref{sec:data-generation} details the specific randomization strategies employed, including realistic camera artifacts (motion blur, rolling shutter, lens distortion) and diverse environmental conditions that prepare the 4D classifier for deployment beyond the simulation domain.
+
+% \subsection{Isaac Sim Environment Setup}
+
+% \paragraph{Simulation Platform:}
+% Isaac Sim provides:
+% \begin{itemize}
+%   \item Physically-based rendering (PBR) with realistic lighting and materials
+%   \item Accurate camera models (lens distortion, rolling shutter, motion blur)
+%   \item Physics simulation for realistic flight dynamics
+%   \item Automatic ground-truth annotation (depth, segmentation, 3D trajectories)
+% \end{itemize}
+
+% \paragraph{Multi-Camera Configuration:}
+% We configure Isaac Sim with camera parameters matching our target deployment (Chapter~\ref{cha:problem_setting}):
+% \begin{itemize}
+%   \item $N = 5$ cameras in inward-looking configuration
+%   \item Resolution: 1920$\times$1080, 30 FPS
+%   \item Intrinsics: $f_x = f_y = 1000$ px, $c_x = 960$, $c_y = 540$
+%   \item Radial distortion: $k_1 = -0.05$, $k_2 = 0.01$
+%   \item Camera positions: Ring arrangement with 30--50m radius, 2--5m height, pointing 30--60$^\circ$ upward
+% \end{itemize}
+
+% Cameras are synchronized to the same timestep in simulation, providing perfect temporal alignment (later degraded during training to simulate real-world sync errors).
+
+% \subsection{Object Assets and Flight Trajectories}
+
+% \paragraph{3D Models:}
+% We use objects from Objaverse:
+% \begin{itemize}
+%   \item \textbf{Drones:} X quadcopter models (DJI Phantom, Mavic variants, racing drones, DIY frames)
+%   \item \textbf{Birds:} Y bird models (seagulls, pigeons, crows, raptors with varying wingspans)
+%   \item Models are rigged for animation (rotating rotors for drones, flapping wings for birds)
+% \end{itemize}
+
+% \paragraph{Flight Dynamics:}
+% \begin{itemize}
+%   \item \textbf{Drones:} Smooth Bezier spline trajectories with velocity 0--15 m/s, acceleration $<$ 5 m/s$^2$, realistic yaw/pitch/roll constraints
+%   \item \textbf{Birds:} Flapping flight with sinusoidal wing motion (frequency 2--10 Hz), gliding phases, perching attempts, agile turns (acceleration up to 20 m/s$^2$)
+%   \item Trajectories pass through the central monitored volume, ensuring objects are visible to $\geq 3$ cameras for at least 1 second
+% \end{itemize}
+
+% \subsection{Environmental Variation}
+
+% To improve sim-to-real transfer, we randomize:
+% \begin{itemize}
+%   \item \textbf{Lighting:} Time of day (dawn, noon, dusk), sun angle, cloud coverage, HDR sky textures
+%   \item \textbf{Weather:} Clear, hazy (atmospheric scattering), light rain (droplet effects)
+%   \item \textbf{Background:} Sky textures, distant terrain (mountains, buildings at horizon), moving clouds
+%   \item \textbf{Camera effects:} Rolling shutter (readout time 10--33ms), motion blur (shutter speed 1/60--1/1000s), noise (Gaussian $\sigma = 0.01$), lens flare
+% \end{itemize}
+
+% \subsection{Ground Truth Annotations}
+
+% For each frame, Isaac Sim outputs:
+% \begin{itemize}
+%   \item \textbf{RGB images:} 1920$\times$1080 $\times$ 3 per camera
+%   \item \textbf{Depth maps:} Metric depth in meters
+%   \item \textbf{Segmentation masks:} Per-pixel instance IDs and semantic labels (drone, bird, sky, terrain)
+%   \item \textbf{3D trajectories:} Object position, orientation (quaternion), bounding box in world frame
+%   \item \textbf{Camera parameters:} Intrinsics $\mathbf{K}$, extrinsics $[\mathbf{R} | \mathbf{t}]$, per-frame timestamps
+% \end{itemize}
+
+% This rich supervision enables training of all pipeline components: segmentation, reconstruction, and classification.
+
+% \subsection{Dataset Statistics}
+
+% \begin{table}[h]
+% \centering
+% \begin{tabular}{lc}
+% \toprule
+% \textbf{Property} & \textbf{Value} \\
+% \midrule
+% Total sequences & 10,000 \\
+% Frames per sequence & 100 (3.3 seconds @ 30 FPS) \\
+% Total frames & 1,000,000 \\
+% Object instances (drones) & 5,000 \\
+% Object instances (birds) & 5,000 \\
+% Multi-view visibility ($\geq 3$ cameras) & 85\% of frames \\
+% Object size range (pixels) & 10$\times$10 to 100$\times$100 \\
+% \bottomrule
+% \end{tabular}
+% \caption{Isaac Sim synthetic dataset statistics.}
+% \label{tab:isaac_sim_stats}
+% \end{table}
+
+% \section{Multi-Camera Track-Before-Detect Segmentation}
+% \label{sec:tbd_segmentation}
+
+% The first stage of the pipeline segments dynamic foreground objects (flying objects) from the static background and clutter. As motivated in Chapter~\ref{cha:design_rationale}, we use a track-before-detect approach.
+
+% \subsection{Ray-Marching Volumetric Voting}
+
+% \paragraph{Discretization:}
+% We discretize the monitored volume $\mathcal{V}$ into a coarse voxel grid with resolution $128 \times 128 \times 64$ (corresponding to $\sim$ 1m voxels for a 100m $\times$ 100m $\times$ 50m volume).
+
+% \paragraph{Per-Camera Pixel Difference:}
+% For each camera $i$ and pixel $(u, v)$ at time $t$, compute temporal difference:
+% \[
+% \Delta I_i(u, v, t) = \left| I_i(u, v, t) - I_i(u, v, t - \Delta t) \right|
+% \]
+% where $I_i$ is the grayscale intensity. Pixels with $\Delta I_i > \tau_{\text{motion}}$ are motion candidates.
+
+% \paragraph{Ray Marching:}
+% For each motion candidate pixel $(u, v)$ in camera $i$:
+% \begin{enumerate}
+%   \item Back-project pixel to a 3D ray using camera intrinsics $\mathbf{K}_i$ and extrinsics $[\mathbf{R}_i | \mathbf{t}_i]$
+%   \item March along the ray through the voxel grid, incrementing vote counts for voxels intersected by the ray
+%   \item Weight votes by $\Delta I_i(u, v, t)$ (stronger motion → higher vote)
+% \end{enumerate}
+
+% \paragraph{Multi-View Aggregation:}
+% A voxel at position $\mathbf{p}$ receives votes from all cameras:
+% \[
+% V(\mathbf{p}, t) = \sum_{i=1}^{N} \sum_{(u,v) \in \text{motion candidates}} w(\mathbf{p}, i, u, v)
+% \]
+% where $w(\mathbf{p}, i, u, v)$ is the vote weight (proportional to $\Delta I_i$ if ray intersects voxel).
+
+% \paragraph{Temporal Accumulation:}
+% Accumulate votes over a sliding window of $k = 5$ frames:
+% \[
+% V_{\text{accum}}(\mathbf{p}, t) = \sum_{t' = t - k + 1}^{t} V(\mathbf{p}, t')
+% \]
+
+% \paragraph{Thresholding:}
+% Voxels with $V_{\text{accum}}(\mathbf{p}, t) > \tau_{\text{TBD}}$ are labeled as foreground. Connected components are extracted as candidate objects.
+
+% \subsection{Per-Pixel Foreground Masks}
+
+% For each camera, project foreground voxels back to image space to obtain per-pixel masks:
+% \begin{enumerate}
+%   \item For each foreground voxel $\mathbf{p}$, project to pixel $(u, v)$ in camera $i$ using $\mathbf{K}_i [\mathbf{R}_i | \mathbf{t}_i] \mathbf{p}$
+%   \item Mark pixel $(u, v)$ as foreground
+%   \item Apply morphological dilation (5$\times$5 kernel) to account for voxel discretization
+% \end{enumerate}
+
+% These masks are used to crop foreground regions for downstream Gaussian reconstruction (Section~\ref{sec:gaussian_reconstruction}).
+
+% \subsection{Hyperparameters and Tuning}
+
+% \begin{table}[h]
+% \centering
+% \begin{tabular}{lcc}
+% \toprule
+% \textbf{Parameter} & \textbf{Value} & \textbf{Tuning Method} \\
+% \midrule
+% Motion threshold $\tau_{\text{motion}}$ & 15 (0--255 scale) & Grid search on validation set \\
+% TBD vote threshold $\tau_{\text{TBD}}$ & 50 votes & Precision-recall curve \\
+% Temporal window $k$ & 5 frames & Ablation study (3, 5, 7, 10) \\
+% Voxel resolution & $128^3$ & Memory constraint \\
+% \bottomrule
+% \end{tabular}
+% \caption{Track-before-detect segmentation hyperparameters.}
+% \label{tab:tbd_hyperparams}
+% \end{table}
+
+% Hyperparameters are tuned on a held-out validation set from Isaac Sim to maximize F1 score of voxel-level foreground segmentation.
+
+% \section{Feed-Forward 3D/4D Gaussian Reconstruction}
+% \label{sec:gaussian_reconstruction}
+
+% Given segmented foreground regions in multi-view RGB frames, we reconstruct 3D Gaussian representations using feed-forward Gaussian splatting methods.
+
+% \subsection{MVSplat-Style Cost-Volume Architecture}
+
+% Building on MVSplat (Chapter~\ref{cha:background}, Section~\ref{sec:gaussian_depth}), we adapt the architecture for our multi-camera, small-object scenario.
+
+% \paragraph{Input:}
+% \begin{itemize}
+%   \item $N$ RGB images $\{I_1, \ldots, I_N\}$ cropped to foreground bounding boxes
+%   \item Camera intrinsics $\{\mathbf{K}_1, \ldots, \mathbf{K}_N\}$ and extrinsics $\{[\mathbf{R}_1 | \mathbf{t}_1], \ldots, [\mathbf{R}_N | \mathbf{t}_N]\}$
+% \end{itemize}
+
+% \paragraph{Feature Extraction:}
+% Extract per-view features using a ConvNet encoder (ResNet-34 or EfficientNet-B0):
+% \[
+% \mathbf{F}_i = \text{Encoder}(I_i) \quad \in \mathbb{R}^{H/4 \times W/4 \times 64}
+% \]
+
+% \paragraph{Cost Volume Construction:}
+% For a reference view (typically the view with largest object bounding box):
+% \begin{enumerate}
+%   \item Define $D = 64$ depth planes uniformly spaced in $[d_{\min}, d_{\max}]$
+%   \item For each depth $d$ and pixel $(u, v)$:
+%     \begin{itemize}
+%       \item Warp features from other views using homography $\mathbf{H}_{ij}(d)$ based on plane at depth $d$
+%       \item Aggregate warped features (variance-based aggregation): $C(u, v, d) = \text{Var}(\{\mathbf{F}_1, \ldots, \mathbf{F}_N\})$
+%     \end{itemize}
+%   \item Result: Cost volume $C \in \mathbb{R}^{H/4 \times W/4 \times D}$
+% \end{enumerate}
+
+% \paragraph{Depth Prediction:}
+% Apply 3D CNN (U-Net style) on cost volume to refine, then soft argmax over depth dimension:
+% \[
+% \hat{d}(u, v) = \sum_{d=1}^{D} d \cdot \text{softmax}(C(u, v, :))
+% \]
+
+% \paragraph{Gaussian Parameter Prediction:}
+% From predicted depth $\hat{d}$ and reference view features $\mathbf{F}_{\text{ref}}$:
+% \begin{itemize}
+%   \item \textbf{Gaussian centers:} Back-project $(u, v, \hat{d})$ to 3D: $\boldsymbol{\mu}_{uv} = \mathbf{K}_{\text{ref}}^{-1} [\mathbf{R}_{\text{ref}} | \mathbf{t}_{\text{ref}}]^{-1} [u \hat{d}, v \hat{d}, \hat{d}, 1]^T$
+%   \item \textbf{Gaussian scales:} Predict per-pixel scale $\mathbf{s}_{uv} \in \mathbb{R}^3$ via MLP: $\mathbf{s}_{uv} = \text{MLP}_s(\mathbf{F}_{\text{ref}}(u, v))$
+%   \item \textbf{Gaussian rotations:} Predict quaternion $\mathbf{q}_{uv} \in \mathbb{H}$ via MLP: $\mathbf{q}_{uv} = \text{MLP}_q(\mathbf{F}_{\text{ref}}(u, v))$
+%   \item \textbf{Opacity:} Predict $\alpha_{uv} \in [0,1]$ via MLP: $\alpha_{uv} = \sigma(\text{MLP}_\alpha(\mathbf{F}_{\text{ref}}(u, v)))$
+%   \item \textbf{Color (SH coefficients):} Predict spherical harmonics via MLP: $\mathbf{SH}_{uv} = \text{MLP}_{\text{SH}}(\mathbf{F}_{\text{ref}}(u, v))$
+% \end{itemize}
+
+% \paragraph{Output:}
+% Set of 3D Gaussians $\mathcal{G} = \{(\boldsymbol{\mu}_j, \mathbf{s}_j, \mathbf{q}_j, \alpha_j, \mathbf{SH}_j)\}_{j=1}^{M}$ where $M \approx H/4 \times W/4$ (typically 5,000--20,000 Gaussians per object).
+
+% \subsection{4D Temporal Extension}
+
+% For sequences of $T$ frames, we extend to 4D Gaussians:
+
+% \paragraph{Independent Per-Frame Reconstruction:}
+% Reconstruct 3DGS for each frame $t \in \{1, \ldots, T\}$ independently, obtaining $\{\mathcal{G}_1, \ldots, \mathcal{G}_T\}$.
+
+% \paragraph{Temporal Correspondence via Optical Flow:}
+% \begin{enumerate}
+%   \item Compute optical flow between consecutive frames using RAFT~\cite{raft}
+%   \item For each Gaussian center $\boldsymbol{\mu}_j^{(t)}$ at frame $t$, project to 2D pixel $(u, v)$ in reference camera
+%   \item Follow optical flow to find corresponding pixel $(u', v')$ in frame $t+1$
+%   \item Associate with nearest Gaussian center in frame $t+1$ (within 0.1m threshold)
+% \end{enumerate}
+
+% \paragraph{Trajectory Parameterization:}
+% For each tracked Gaussian $j$:
+% \begin{itemize}
+%   \item \textbf{Position trajectory:} Fit linear or quadratic spline to $\{\boldsymbol{\mu}_j^{(t)}\}_{t=1}^{T}$
+%   \item \textbf{Scale trajectory:} Fit spline to $\{\mathbf{s}_j^{(t)}\}_{t=1}^{T}$
+%   \item \textbf{Rotation trajectory:} Interpolate quaternions using SLERP
+%   \item \textbf{Opacity trajectory:} Fit spline to $\{\alpha_j^{(t)}\}_{t=1}^{T}$
+% \end{itemize}
+
+% This yields 4D Gaussians with time-varying parameters, enabling extraction of temporal features (velocity, rotation rate, scale change rate).
+
+% \subsection{Training Losses}
+
+% The Gaussian reconstruction network is trained with multi-task losses:
+
+% \paragraph{Photometric Loss (Novel View Synthesis):}
+% Render Gaussians from held-out cameras and compare to ground truth:
+% \[
+% \mathcal{L}_{\text{photo}} = \sum_{i \in \text{held-out}} \left\| \text{Render}(\mathcal{G}, \mathbf{K}_i, [\mathbf{R}_i | \mathbf{t}_i]) - I_i \right\|_1
+% \]
+
+% \paragraph{Depth Supervision:}
+% Supervise predicted depth with ground truth depth from Isaac Sim:
+% \[
+% \mathcal{L}_{\text{depth}} = \left\| \hat{d} - d_{\text{GT}} \right\|_1
+% \]
+
+% \paragraph{Segmentation Supervision:}
+% Encourage opacity to be high inside foreground mask, low outside:
+% \[
+% \mathcal{L}_{\text{seg}} = \text{BCE}(\alpha_{\text{rendered}}, M_{\text{GT}})
+% \]
+
+% \paragraph{Total Loss:}
+% \[
+% \mathcal{L}_{\text{total}} = \lambda_{\text{photo}} \mathcal{L}_{\text{photo}} + \lambda_{\text{depth}} \mathcal{L}_{\text{depth}} + \lambda_{\text{seg}} \mathcal{L}_{\text{seg}}
+% \]
+
+% Weights: $\lambda_{\text{photo}} = 1.0$, $\lambda_{\text{depth}} = 0.1$, $\lambda_{\text{seg}} = 0.5$ (tuned on validation set).
+
+% \section{SE(3)-Equivariant Temporal Classification}
+% \label{sec:classification_architecture}
+
+% Given a sequence of 3D/4D Gaussians $\{\mathcal{G}_1, \ldots, \mathcal{G}_T\}$, we classify the object as drone or bird.
+
+% \subsection{Per-Frame SE(3)-Equivariant Encoder}
+
+% For each frame $t$, encode Gaussians $\mathcal{G}_t$ using an SE(3)-equivariant network.
+
+% \paragraph{Graph Construction:}
+% Build k-NN graph over Gaussian centers $\{\boldsymbol{\mu}_j\}$:
+% \begin{itemize}
+%   \item Nodes: Gaussians
+%   \item Edges: Connect each Gaussian to its $k=16$ nearest neighbors (Euclidean distance)
+% \end{itemize}
+
+% \paragraph{Node Features:}
+% For each Gaussian $j$, construct feature vector:
+% \begin{itemize}
+%   \item \textbf{Position:} $\boldsymbol{\mu}_j \in \mathbb{R}^3$ (vector features, SE(3)-equivariant)
+%   \item \textbf{Scale:} $\mathbf{s}_j \in \mathbb{R}^3$ (scalar features, SE(3)-invariant after normalization)
+%   \item \textbf{Rotation:} $\mathbf{q}_j \in \mathbb{H}$ converted to rotation matrix $\mathbf{R}_j$ (frame features)
+%   \item \textbf{Opacity:} $\alpha_j \in \mathbb{R}$ (scalar, invariant)
+%   \item \textbf{Color:} First SH coefficient (ambient color, RGB, scalar features)
+% \end{itemize}
+
+% \paragraph{E(n) Equivariant Graph Neural Network:}
+% We use EGNN~\cite{egnn} layers:
+% \begin{enumerate}
+%   \item Initialize scalar features $h_j^{(0)} = [\text{log}(\mathbf{s}_j), \alpha_j, \text{color}_j]$
+%   \item For $l = 1, \ldots, L$ layers:
+%     \begin{itemize}
+%       \item Compute edge features: $e_{ij} = \|\boldsymbol{\mu}_i - \boldsymbol{\mu}_j\|$, relative position $\Delta \boldsymbol{\mu}_{ij} = \boldsymbol{\mu}_i - \boldsymbol{\mu}_j$
+%       \item Update node features: $h_j^{(l)} = h_j^{(l-1)} + \text{MLP}_h\left(\sum_{i \in \mathcal{N}(j)} [h_i^{(l-1)}, h_j^{(l-1)}, e_{ij}]\right)$
+%       \item Update positions (equivariant): $\boldsymbol{\mu}_j^{(l)} = \boldsymbol{\mu}_j^{(l-1)} + \sum_{i \in \mathcal{N}(j)} \Delta \boldsymbol{\mu}_{ij} \cdot \text{MLP}_{\mu}([h_i^{(l-1)}, h_j^{(l-1)}, e_{ij}])$
+%     \end{itemize}
+% \end{enumerate}
+
+% \paragraph{Global Pooling:}
+% Aggregate node features to frame-level embedding:
+% \[
+% \mathbf{z}_t = \text{mean}\left(\{h_j^{(L)}\}_{j=1}^{M}\right) \quad \in \mathbb{R}^{d}
+% \]
+% where $d = 128$ is the embedding dimension.
+
+% This frame embedding $\mathbf{z}_t$ is SE(3)-invariant by construction (due to EGNN equivariance).
+
+% \subsection{Temporal Transformer}
+
+% Given frame embeddings $\{\mathbf{z}_1, \ldots, \mathbf{z}_T\}$, capture temporal dynamics with a transformer.
+
+% \paragraph{Temporal Positional Encoding:}
+% Add sinusoidal positional encodings to frame embeddings:
+% \[
+% \mathbf{z}_t' = \mathbf{z}_t + \text{PE}(t)
+% \]
+
+% \paragraph{Transformer Encoder:}
+% Apply $L_{\text{trans}} = 4$ transformer encoder layers:
+% \begin{itemize}
+%   \item Multi-head self-attention (8 heads)
+%   \item Feed-forward MLP (hidden dimension 512)
+%   \item Layer normalization and residual connections
+% \end{itemize}
+
+% Output: Refined embeddings $\{\tilde{\mathbf{z}}_1, \ldots, \tilde{\mathbf{z}}_T\}$.
+
+% \paragraph{Temporal Aggregation:}
+% Aggregate temporal embeddings:
+% \[
+% \mathbf{z}_{\text{final}} = \text{mean}\left(\{\tilde{\mathbf{z}}_t\}_{t=1}^{T}\right) \quad \in \mathbb{R}^{d}
+% \]
+
+% Alternatively, use attention pooling with learnable query vector.
+
+% \subsection{Classification Head}
+
+% \paragraph{Fully Connected Layers:}
+% \[
+% \mathbf{p} = \text{softmax}(\text{MLP}(\mathbf{z}_{\text{final}})) \quad \in \mathbb{R}^{2}
+% \]
+% where $\mathbf{p} = [p_{\text{drone}}, p_{\text{bird}}]$ are class probabilities.
+
+% \paragraph{Training Loss:}
+% Cross-entropy loss with ground truth labels from Isaac Sim:
+% \[
+% \mathcal{L}_{\text{class}} = -\sum_{c} y_c \log(p_c)
+% \]
+
+% \subsection{Architecture Summary}
+
+% \begin{table}[h]
+% \centering
+% \small
+% \begin{tabular}{lcc}
+% \toprule
+% \textbf{Component} & \textbf{Layer Type} & \textbf{Parameters} \\
+% \midrule
+% SE(3)-Equivariant Encoder & EGNN (4 layers) & 1.2M \\
+% Temporal Transformer & Transformer (4 layers, 8 heads) & 3.5M \\
+% Classification Head & MLP (2 layers) & 0.1M \\
+% \midrule
+% Total & & 4.8M \\
+% \bottomrule
+% \end{tabular}
+% \caption{Classification network architecture parameters.}
+% \label{tab:classifier_params}
+% \end{table}
+
+% \section{Trajectory-Based Camera Pose Refinement}
+% \label{sec:pose_refinement}
+
+% Camera extrinsics may drift over time due to wind, vibration, or thermal expansion (Chapter~\ref{cha:problem_setting}). We refine extrinsics online using 3D object trajectories.
+
+% \subsection{Multi-View Trajectory Consistency}
+
+% \paragraph{Observation:}
+% If the same object is tracked across multiple cameras, its 3D trajectory must be consistent. Inconsistencies indicate calibration errors.
+
+% \paragraph{Reprojection Error:}
+% For an object tracked in cameras $i$ and $j$, triangulate 3D position from 2D detections:
+% \[
+% \mathbf{p}_{ij}^{\text{3D}} = \text{Triangulate}\left((u_i, v_i), (u_j, v_j), \mathbf{K}_i, \mathbf{K}_j, [\mathbf{R}_i | \mathbf{t}_i], [\mathbf{R}_j | \mathbf{t}_j]\right)
+% \]
+
+% Reproject to camera $k$:
+% \[
+% (u_k', v_k') = \pi\left(\mathbf{K}_k [\mathbf{R}_k | \mathbf{t}_k] \mathbf{p}_{ij}^{\text{3D}}\right)
+% \]
+
+% Reprojection error:
+% \[
+% e_k = \left\| (u_k', v_k') - (u_k, v_k) \right\|
+% \]
+
+% Large reprojection errors across multiple objects indicate extrinsic drift.
+
+% \subsection{Bundle Adjustment for Pose Refinement}
+
+% \paragraph{Formulation:}
+% Optimize camera extrinsics $\{[\mathbf{R}_i | \mathbf{t}_i]\}$ and 3D object trajectories $\{\mathbf{p}_o(t)\}$ to minimize reprojection error:
+% \[
+% \min_{\{\mathbf{R}_i, \mathbf{t}_i\}, \{\mathbf{p}_o(t)\}} \sum_{o, t, i} \rho\left( \left\| \pi(\mathbf{K}_i [\mathbf{R}_i | \mathbf{t}_i] \mathbf{p}_o(t)) - (u_{o,t,i}, v_{o,t,i}) \right\| \right)
+% \]
+% where $\rho$ is a robust loss function (Huber) to handle outliers.
+
+% \paragraph{Regularization:}
+% \begin{itemize}
+%   \item \textbf{Smoothness prior on trajectories:} Penalize high acceleration (birds and drones have bounded dynamics)
+%   \item \textbf{Prior on extrinsics:} Regularize toward initial calibration (avoid large drifts)
+% \end{itemize}
+
+% \paragraph{Solver:}
+% Use Levenberg-Marquardt or Ceres Solver for non-linear least squares optimization.
+
+% \subsection{Online Update Strategy}
+
+% \paragraph{Triggering Refinement:}
+% Perform bundle adjustment when:
+% \begin{itemize}
+%   \item Accumulated reprojection error over tracked objects exceeds threshold (e.g., mean error $>$ 5 pixels)
+%   \item Sufficient trajectories collected (e.g., $\geq$ 10 tracked objects with $\geq$ 20 frames each)
+% \end{itemize}
+
+% \paragraph{Incremental Update:}
+% Update extrinsics incrementally (small adjustments) to avoid disrupting ongoing tracking. Use warm-start from previous calibration.
+
+% \section{Multi-Object Tracking and Re-Identification}
+% \label{sec:tracking}
+
+% The final component maintains ID-consistent tracks of multiple objects over time.
+
+% \subsection{3D Tracking Pipeline}
+
+% \paragraph{State Representation:}
+% Each track $k$ maintains state:
+% \begin{itemize}
+%   \item 3D position $\mathbf{p}_k \in \mathbb{R}^3$
+%   \item Velocity $\mathbf{v}_k \in \mathbb{R}^3$
+%   \item Class label $c_k \in \{\text{drone}, \text{bird}\}$ and confidence
+%   \item Re-ID embedding $\mathbf{e}_k \in \mathbb{R}^{128}$
+%   \item Age (frames since initialization)
+% \end{itemize}
+
+% \paragraph{Prediction (Motion Model):}
+% Constant velocity motion model:
+% \[
+% \hat{\mathbf{p}}_k(t+1) = \mathbf{p}_k(t) + \mathbf{v}_k(t) \Delta t
+% \]
+
+% For drones, optionally use a physics-informed model (e.g., assuming bounded acceleration).
+
+% \paragraph{Detection:}
+% From Gaussian reconstruction (Section~\ref{sec:gaussian_reconstruction}), extract:
+% \begin{itemize}
+%   \item 3D bounding box center (centroid of Gaussian means)
+%   \item Classification result (Section~\ref{sec:classification_architecture})
+%   \item Re-ID embedding (from frame-level embedding $\mathbf{z}_{\text{final}}$)
+% \end{itemize}
+
+% \paragraph{Data Association (Hungarian Algorithm):}
+% Compute cost matrix $C_{kd}$ between tracks $k$ and detections $d$:
+% \[
+% C_{kd} = w_{\text{pos}} \|\mathbf{p}_k - \mathbf{p}_d\| + w_{\text{app}} \|\mathbf{e}_k - \mathbf{e}_d\| + w_{\text{class}} \mathbb{1}(c_k \neq c_d)
+% \]
+
+% Solve assignment problem via Hungarian algorithm. Unmatched detections initialize new tracks; unmatched tracks age out after $N_{\text{miss}} = 10$ frames.
+
+% \paragraph{Update (Kalman Filter):}
+% For matched track-detection pairs, update state using Kalman filter with 3D position observation.
+
+% \subsection{Re-Identification Embeddings}
+
+% Re-ID embeddings $\mathbf{e}_k$ are extracted from the classification network's frame-level embedding $\mathbf{z}_{\text{final}}$, which encodes appearance and motion patterns. These embeddings help maintain track identity through occlusions or brief missed detections.
+
+% \section{Implementation Details}
+
+% \subsection{Software Stack}
+% \begin{itemize}
+%   \item \textbf{Simulation:} NVIDIA Isaac Sim 2023.1.0
+%   \item \textbf{Deep Learning:} PyTorch 2.1, CUDA 12.1
+%   \item \textbf{Gaussian Rendering:} diff-gaussian-rasterization (CUDA kernels)
+%   \item \textbf{Bundle Adjustment:} Ceres Solver 2.1
+%   \item \textbf{Tracking:} Custom Python implementation with scipy.optimize
+% \end{itemize}
+
+% \subsection{Training Details}
+% \begin{itemize}
+%   \item \textbf{Reconstruction network:} Trained for 200k iterations, batch size 8, AdamW optimizer, lr = 1e-4 with cosine decay
+%   \item \textbf{Classification network:} Trained for 100k iterations, batch size 32, AdamW optimizer, lr = 3e-4 with warmup
+%   \item \textbf{Data augmentation:} Random rotations (SO(3)), translations ($\pm$ 5m), scale jitter (0.8--1.2$\times$), color jitter
+%   \item \textbf{Hardware:} 4$\times$ NVIDIA A100 GPUs (40GB) for training; NVIDIA Jetson AGX Orin for inference
+% \end{itemize}
+
+% \subsection{Inference Pipeline}
+
+% \begin{enumerate}
+%   \item \textbf{Input:} Multi-view RGB frames (30 FPS)
+%   \item \textbf{TBD Segmentation:} 15 ms per frame (CUDA)
+%   \item \textbf{Gaussian Reconstruction:} 80 ms per object (batch size 4)
+%   \item \textbf{Classification:} 20 ms per object
+%   \item \textbf{Tracking Update:} 5 ms per frame
+%   \item \textbf{Total latency:} $\sim$ 120--200 ms (depending on number of objects)
+% \end{enumerate}
+
+% This meets our target latency of $<$ 1 second (Chapter~\ref{cha:problem_setting}).
+
+% \section{Chapter Summary}
+
+% This chapter has presented the complete end-to-end pipeline:
+% \begin{itemize}
+%   \item \textbf{Synthetic data generation} (Isaac Sim) provides infinite training data with rich annotations
+%   \item \textbf{Multi-camera track-before-detect} segments small, low-SNR objects via volumetric voting
+%   \item \textbf{Feed-forward 3D/4D Gaussian reconstruction} leverages cost-volume depth for symmetric objects
+%   \item \textbf{SE(3)-equivariant temporal classification} exploits 4D motion dynamics for drone vs. bird discrimination
+%   \item \textbf{Trajectory-based pose refinement} maintains calibration accuracy over time
+%   \item \textbf{Multi-object tracking} provides ID-consistent tracks for surveillance applications
+% \end{itemize}
+
+% Chapter~\ref{cha:experiments} will validate each component through systematic experiments and ablation studies, addressing the research questions posed in Chapter~\ref{cha:intro}.
+

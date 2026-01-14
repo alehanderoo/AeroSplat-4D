@@ -1,0 +1,12 @@
+# Requirements for DepthSplat Gradio Demo
+# Most dependencies are shared with the main depthsplat package
+
+gradio
+numpy
+torch
+torchvision
+Pillow
+scipy
+einops
+omegaconf
+hydra-core

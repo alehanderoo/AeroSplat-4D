@@ -1,0 +1,10 @@
+[property]
+batch-size=5
+width=640
+height=480
+batched-push-timeout=33333
+live-source=1
+sync-inputs=1
+# 0: NVMM (GPU memory), 1: Unified, 2: System, 3: Surface
+nvbuf-memory-type=0
+gpu-id=0

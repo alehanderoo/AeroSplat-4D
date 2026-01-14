@@ -1,0 +1,220 @@
+\documentclass[a4paper]{report}
+
+%%%%%%%% CREATE DOCUMENT STRUCTURE %%%%%%%%
+%% Language and font encodings
+\usepackage[english]{babel}
+\usepackage[utf8x]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{adjustbox}
+\usepackage{indentfirst}
+%\usepackage{subfig}
+
+%% Sets page size and margins
+\usepackage[a4paper,top=3cm,bottom=2cm,left=2cm,right=2cm,marginparwidth=1.75cm]{geometry}
+
+%% Useful packages
+\usepackage[style=ieee, url=false, natbib=true]{biblatex}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{pifont}
+\usepackage{tikz}
+\usetikzlibrary{trees,arrows}
+\usepackage{blindtext}
+\usepackage{multicol}
+\usepackage{graphicx}
+\usepackage{gensymb}
+\usepackage[colorinlistoftodos]{todonotes}
+
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{sectsty}
+\usepackage{circuitikz}
+\usepackage{float}
+\usepackage{pgfplots}
+\usepackage{titling}
+\usepackage{wrapfig}
+\usepackage{blindtext}
+\usepackage[colorinlistoftodos]{todonotes}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{setspace}
+\usepackage{fancyhdr}
+\usepackage{siunitx}
+\usepackage[Bjornstrup]{fncychap}
+\usepackage{comment}
+\usepackage{pdfpages}
+
+\usepackage{ragged2e}
+\usepackage{svg}
+
+
+% Additional packages needed for thesis content 
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{csvsimple}
+\usepackage{ifthen}
+\usepackage{enumitem}
+\setlist[itemize]{nosep}
+\setlist[enumerate]{nosep}
+
+\usepackage[parfill]{parskip} % no indent after new line
+
+
+% Algorithm packages (with report class compatibility fix)
+\usepackage{algorithmic}
+\usepackage{algorithm}
+
+\addbibresource{ref_thesis.bib}
+
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\setlength {\marginparwidth }{2cm}
+% Rename todonotes' \todo command and define custom inline TODO
+\let\todotodo\todo
+\renewcommand{\todo}[1]{\textcolor{red}{[\textbf{TODO:} #1]}}
+
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
+
+
+
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\leftmark}
+\renewcommand{\chaptermark}[1]{\markboth{#1}{}}
+\fancyhead[R]{\nouppercase{\rightmark} \ \thepage }
+\renewcommand{\sectionmark}[1]{\markright{#1}}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+
+\definecolor{darkgreen}{rgb}{0.0, 0.4, 0.0}
+
+
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+
+
+
+%%%%%%%% DOCUMENT %%%%%%%%
+\begin{document}
+
+%%%Custom title page
+
+%\includepdf[pages={-}]{titelpage.pdf}
+\pagenumbering{roman}
+	%%%% TU Delft Title Page
+	\begin{titlepage}
+		
+		\newcommand{\HRule}{\rule{\linewidth}{0.5mm}} 							% horizontal line and its thickness
+		\center 
+		
+		% University
+		
+		% Document info									% Course Code
+		\HRule \\[0.8cm]
+		{ \huge \bfseries 3D Occupancy Prediction, Classification and Tracking of Flying Objects using Multi-Camera 4D Gaussian Splatting}\\[0.7cm]								% Assignment
+		\HRule \\[1cm]
+        \large
+        By\\[1cm]
+		\huge
+		Alessandro Verdiesen\\[2cm]
+		% Author info
+        \large
+		{to obtain the degree of Master of Science
+at Delft University of Technology,
+to be defended publicly on DATE.}\\[4cm]
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{ccl}
+         Student number:& 5885396 &\\
+         Project duration:& x &\\
+         Thesis committee:& Prof. Dr. Peter Hofstee&TU Delft, Supervisor\\
+         & Dr. S.T.A.F.F. Member &TU Delft\\
+         & Wim Bos &Lumiad BV, External supervisor\\
+    \end{tabular}
+
+    \label{tab:placeholder}
+\end{table}
+An electronic version of this thesis is available at \href{link}{link/.}\\[1cm]
+
+		\includegraphics[width=0.6\textwidth]{img/TU_delft_logo.jpg}\\[1cm] 	% University logo
+		\vfill 
+	\end{titlepage}
+	
+	%%%% SECTIONS
+
+% Frontmatter
+\input{00b_preface}
+\addcontentsline{toc}{chapter}{Preface}
+\newpage
+
+\input{00a_abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+\newpage
+
+\tableofcontents
+\listoffigures
+
+\input{00c_symbols}
+\newpage
+
+% Mainmatter - switch to arabic page numbering
+\pagenumbering{arabic}
+
+\input{01_introduction}
+\newpage
+\input{02_problem_setting}
+\newpage
+\input{03_background}
+\newpage
+\input{04_related_work}
+\newpage
+% \input{05_design_rationale}
+% \newpage
+\input{05_method}
+\newpage
+\input{06_experiments}
+\newpage
+\input{07_discussion}
+\newpage
+\input{08_conclusions_and_future_work}
+\newpage
+
+% Bibliography
+\printbibliography[heading=bibintoc]
+\newpage
+
+% Appendix
+\appendix
+\input{09_appendix}
+% \newpage
+% \input{99_requirements}
+
+
+	
+
+\end{document}

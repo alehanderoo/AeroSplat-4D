@@ -1,0 +1,381 @@
+% \chapter{\label{cha:design_rationale}Design Space and Rationale}
+
+% Chapter~\ref{cha:background} systematically reviewed alternative approaches for each technical component of a multi-camera flying object detection and tracking system, identifying their advantages and limitations. 
+% This chapter now \textbf{justifies our design choices}, linking each decision to the problem constraints (Chapter~\ref{cha:problem_setting}) and the comparative analysis (Chapter~\ref{cha:background}).
+
+% We organize this chapter as a series of \textbf{design axes}, where for each axis we:
+% \begin{enumerate}
+%   \item State the design question
+%   \item List the main alternatives considered (from Chapter~\ref{cha:background})
+%   \item Present our choice with explicit justification
+%   \item Identify ablation experiments that will validate the choice (Chapter~\ref{cha:experiments})
+% \end{enumerate}
+
+% This presentation demonstrates that our pipeline is the result of systematic design space exploration.
+
+% \section{Design Axis 1: Detection vs. Tracking Strategy}
+
+% \subsection{Design Question}
+% Should we detect objects independently in each frame and then associate detections into tracks (\textbf{detect-before-track, DBT}), or should we integrate evidence across frames before thresholding to detections (\textbf{track-before-detect, TBD})?
+
+% \subsection{Alternatives Considered}
+
+% \paragraph{Detect-Before-Track (DBT):}
+% \begin{itemize}
+%   \item[+] Simple, modular pipeline; mature detector ecosystem
+%   \item[+] Can leverage pretrained detectors (YOLO, Faster R-CNN)
+%   \item[-] Detection must be reliable per frame; small or fast moving objects often missed because of low SNR and motion blur, respectively
+%   \item[-] Temporal information only used after detection (cannot boost SNR)
+% \end{itemize}
+
+% \paragraph{Track-Before-Detect (TBD):}
+% \begin{itemize}
+%   \item[+] Integrates spatio-temporal evidence before thresholding
+%   \item[+] Significantly better for low-SNR small targets
+%   \item[+] Detection output already associated with trajectory
+%   \item[-] Computationally expensive; requires motion model assumptions
+%   \item[-] Delay in detection (accumulation window)
+% \end{itemize}
+
+% \subsection{Our Choice: Multi-View Track-Before-Detect}
+
+% \textbf{Choice:} We adopt a \textbf{multi-view TBD approach} using ray-marching volumetric voting.
+
+% \textbf{Justification:}
+% \begin{enumerate}
+%   \item \textbf{Low per-frame SNR.} Individual camera frames may have low contrast for the object against sky background. TBD accumulates evidence across multiple frames and multiple views, raising SNR before thresholding.
+
+%   \item \textbf{Multi-view geometric constraints.} Unlike monocular TBD (which must search over large 2D+time hypothesis spaces), our multi-camera setup provides geometric constraints: a 3D point must project consistently to all views. Ray-marching voting leverages this to reduce the hypothesis space.
+
+%   \item \textbf{Acceptable latency.} We accumulate over 3--5 frames (100--167ms at 30 FPS), which is within our target latency budget ($<$ 1 second, Chapter~\ref{cha:problem_setting}).
+% \end{enumerate}
+
+% \textbf{Trade-off accepted:}
+% We accept higher computational cost and latency compared to per-frame detection in exchange for higher recall of small objects.
+
+% \textbf{Validation:}
+% Chapter~\ref{cha:experiments}, Section~\ref{sec:ablation_tbd} compares TBD vs. DBT baselines on detection recall for varying object sizes.
+
+% \section{Design Axis 2: Multi-View Fusion Strategy}
+
+% \subsection{Design Question}
+% How should we fuse information from multiple camera views: independently process each view and fuse decisions (\textbf{late fusion}), or combine features before prediction (\textbf{early fusion})?
+
+% \subsection{Alternatives Considered}
+
+% \paragraph{Late Fusion (Decision-Level):}
+% \begin{itemize}
+%   \item[+] Robust to missing views; computationally cheaper
+%   \item[+] Per-view models reusable
+%   \item[-] Cross-view geometry not modeled; weak 3D reasoning
+%   \item[-] Each single view may be too ambiguous for small objects
+% \end{itemize}
+
+% \paragraph{Early Fusion (Feature-Level):}
+% \begin{itemize}
+%   \item[+] Learn cross-view interactions; better for small ambiguous objects
+%   \item[+] Supports 3D reasoning (epipolar constraints, occupancy)
+%   \item[-] Input dimension grows with number of views
+%   \item[-] Requires calibration
+% \end{itemize}
+
+% \subsection{Our Choice: Geometric Early Fusion in 3D (Gaussian Space)}
+
+% \textbf{Choice:} We perform \textbf{early fusion at the 3D Gaussian level}---multi-view RGB frames are processed by a feed-forward Gaussian splatting network that outputs a unified 3D representation explaining all views simultaneously.
+
+% \textbf{Justification:}
+% \begin{enumerate}
+%   \item \textbf{Known calibration available.} Chapter~\ref{cha:problem_setting} established that our surveillance cameras are pre-calibrated. Early geometric fusion (projecting to 3D) requires known poses, which we have.
+
+%   \item \textbf{Small objects ambiguous in single views.} A distant drone may occupy only 20$\times$20 pixels in one view, making per-view classification unreliable. Early fusion allows weak evidence from one view to be disambiguated by strong evidence from other views.
+
+%   \item \textbf{Metric 3D reconstruction is a goal.} We need 3D occupancy predictions and metric positions for tracking. Late fusion in 2D logit space does not naturally provide metric 3D information.
+
+%   \item \textbf{Gaussian representation is compact.} Unlike dense voxel grids or concatenated 2D feature maps (which scale with $N$ views $\times$ resolution), a sparse Gaussian set (hundreds to thousands of primitives) compactly represents the 3D scene.
+% \end{enumerate}
+
+% \textbf{Trade-off accepted:}
+% If a camera fails during operation, the system must re-run reconstruction with $N-1$ views, which may degrade quality. However, our track-before-detect voting requires $\geq 3$ views, so we have redundancy.
+
+% \textbf{Validation:}
+% Chapter~\ref{cha:experiments}, Section~\ref{sec:ablation_fusion} compares early 3D fusion vs. late fusion baselines (per-view classification + voting).
+
+% \section{Design Axis 3: 3D Representation}
+
+% \subsection{Design Question}
+% How should we represent reconstructed 3D objects: voxels, multi-view projections, raw point clouds, or Gaussian primitives?
+
+% \subsection{Alternatives Considered}
+
+% \paragraph{Voxels:}
+% \begin{itemize}
+%   \item[+] Simple, supports 3D CNNs, natural for occupancy
+%   \item[-] Cubic memory cost; inefficient for sparse airspace
+% \end{itemize}
+
+% \paragraph{Projections (Multi-View Rendering):}
+% \begin{itemize}
+%   \item[+] Leverage 2D backbones; no 3D discretization
+%   \item[-] Requires view selection; depth ambiguity; sky background lacks texture
+% \end{itemize}
+
+% \paragraph{Raw Point Clouds:}
+% \begin{itemize}
+%   \item[+] Direct processing, many baselines (PointNet, PointNet++, PointBERT)
+%   \item[-] Assumes uniform sampling; loses Gaussian primitive structure
+% \end{itemize}
+
+% \paragraph{3D Gaussians:}
+% \begin{itemize}
+%   \item[+] Continuous anisotropic representation; compatible with feed-forward reconstruction
+%   \item[+] Rich parameters (scale, rotation, opacity); temporal extension to 4D
+%   \item[-] Less explored for classification; extra parameters need normalization
+% \end{itemize}
+
+% \subsection{Our Choice: 3D Gaussian Primitives (with Point Cloud Baselines)}
+
+% \textbf{Choice:} We adopt \textbf{3D Gaussians} as the primary representation, treating point-based methods as baselines.
+
+% \textbf{Justification:}
+% \begin{enumerate}
+%   \item \textbf{Alignment with feed-forward reconstruction.} Our pipeline uses feed-forward Gaussian splatting methods (MVSplat family, Section~\ref{sec:gaussian_reconstruction}) which naturally output Gaussians, not voxels or point clouds. Using Gaussians directly avoids lossy conversion.
+
+%   \item \textbf{Temporal extension to 4D.} A central hypothesis of this thesis (Chapter~\ref{cha:intro}, RQ2) is that \textbf{temporal changes in Gaussian parameters} (position, scale, rotation) provide discriminative features for classification. Gaussians naturally extend to 4D with time-varying parameters; point clouds do not have native temporal structure.
+
+%   \item \textbf{Compact representation for sparse objects.} A drone or bird requires only hundreds to thousands of Gaussians, far more memory-efficient than voxelizing a 100m $\times$ 100m $\times$ 100m airspace at sufficient resolution.
+
+%   \item \textbf{Rich shape encoding.} Gaussian covariance (scales and rotation) encodes oriented anisotropic shapes (e.g., elongated rotor blades, flat wings), which raw point coordinates do not capture.
+% \end{enumerate}
+
+% \textbf{Trade-off accepted:}
+% Classification directly from Gaussians is less mature than point cloud classification (fewer pretrained models). We mitigate this by implementing PointNet/PointBERT baselines for comparison.
+
+% \textbf{Validation:}
+% Chapter~\ref{cha:experiments}, Section~\ref{sec:ablation_representation} compares Gaussian-based classification vs. point-based baselines (sampling points from Gaussians, then using PointNet).
+
+% \section{Design Axis 4: Depth Estimation for 3D Reconstruction}
+
+% \subsection{Design Question}
+% How should we estimate 3D structure from multi-view RGB: classical feature matching and triangulation, or learned cost-volume-based depth prediction?
+
+% \subsection{Alternatives Considered}
+
+% \paragraph{Feature Matching (SIFT, SURF learned features):}
+% \begin{itemize}
+%   \item[+] Principled geometric approach; no learning required
+%   \item[+] Works well for textured scenes
+%   \item[-] Requires reliable keypoints; small objects provide few features
+%   \item[-] Sky background is textureless; matching fails
+% \end{itemize}
+
+% \paragraph{Cost-Volume Depth (MVSplat, DepthSplat):}
+% \begin{itemize}
+%   \item[+] Depth from multi-view aggregation; robust to textureless regions
+%   \item[+] Sub-pixel accuracy; geometric consistency via plane-sweep
+%   \item[+] Fast feed-forward inference
+%   \item[-] Memory overhead for cost volume; requires known calibration
+%   \item[-] Requires specifying (near / far) depth range; to be set manually per scene 
+%   \item[-] Cost volume includes object and (infinite depth) sky; needs disambiguation which results in ghosting artifacts in the reconstruction
+% \end{itemize}
+
+% \paragraph{Pose-Free Token-Based (FreeSplatter, GS-LRM):}
+% \begin{itemize}
+%   \item[+] Can handle uncalibrated images; end-to-end learning
+%   \item[-] Heavier models; pose ambiguity for small symmetric objects
+% \end{itemize}
+
+% \subsection{Our Choice: Depth-Guided Calibrated Methods}
+
+% \textbf{Choice:} We use \textbf{MVSplat-style cost-volume-based depth prediction} conditioned on known camera calibration.
+
+% \textbf{Justification:}
+% \begin{enumerate}
+%   \item \textbf{Known calibration available.} We have pre-calibrated cameras (Chapter~\ref{cha:problem_setting}), so we should exploit this rather than discarding it. Cost-volume methods leverage calibration for homography warping and epipolar constraints.
+
+%   \item \textbf{Symmetric objects.} Drones (especially quadcopters) are often rotationally symmetric. Texture and silhouette alone are ambiguous. Depth from multi-view depth maps provides geometric disambiguation: even if appearance is symmetric, depth triangulation localizes the 3D position accurately.
+
+%   \item \textbf{Textureless sky background.} Classical and modern feature matching (SIFT/SURF and MAST3R/DUST3R) fails in textureless (or low pixel represented) regions. Learned depths aggregate features in a data-driven way, learning to infer depth even in uniform regions.
+
+% \end{enumerate}
+
+% \textbf{Trade-off accepted:}
+% TBD
+
+% \textbf{Validation:}
+% Chapter~\ref{cha:experiments}, Section~\ref{sec:ablation_depth} compares cost-volume-based reconstruction vs. pose-free baselines (FreeSplatter) on reconstruction quality (Chamfer distance, PSNR).
+
+% \section{Design Axis 5: Classification Architecture}
+
+% \subsection{Design Question}
+% Should we use standard point cloud classifiers (PointNet, PointBERT), or design SE(3)-equivariant architectures that are rotation-invariant by construction?
+
+% \subsection{Alternatives Considered}
+
+% \paragraph{Standard Point Cloud Classifiers (PointNet, PointNet++):}
+% \begin{itemize}
+%   \item[+] Simple, fast, strong baselines, easy to adapt to Gaussians
+%   \item[-] Not SE(3)-equivariant; requires heavy rotation augmentation
+%   \item[-] Struggles with arbitrary drone orientations
+% \end{itemize}
+
+% \paragraph{Graph/Transformer Methods (DGCNN, Point Transformer):}
+% \begin{itemize}
+%   \item[+] Better local geometry modeling; state-of-the-art on benchmarks
+%   \item[-] Still not SE(3)-equivariant without explicit design
+%   \item[-] Heavier computation
+% \end{itemize}
+
+% \paragraph{SE(3)-Equivariant Networks (TFN, SE(3)-Transformer, EGNN):}
+% \begin{itemize}
+%   \item[+] Rotation-invariant by construction; better generalization to unseen poses
+%   \item[+] Sample-efficient; interpretable features
+%   \item[-] More complex math; fewer off-the-shelf implementations
+%   \item[-] Heavier computation (tensor products, spherical harmonics)
+% \end{itemize}
+
+% \subsection{Our Choice: SE(3)-Equivariant Encoder + Temporal Transformer}
+
+% \textbf{Choice:} We adopt an \textbf{SE(3)-equivariant encoder} for per-frame Gaussian features, followed by a \textbf{temporal transformer} over frame embeddings.
+
+% \textbf{Justification:}
+% \begin{enumerate}
+%   \item \textbf{Arbitrary object orientations.} Drones can fly at any orientation (pitch, roll, yaw). Birds bank and turn unpredictably. Standard classifiers require massive rotation augmentation to learn invariance; SE(3)-equivariant networks achieve this by design.
+
+%   \item \textbf{Generalization.} SE(3) equivariance provides better generalization to unseen poses, which is critical when training on synthetic data (Isaac Sim) and deploying on real-world data.
+
+%   \item \textbf{Temporal dynamics.} Our hypothesis (RQ2) is that temporal changes in Gaussian parameters (velocity, rotation rate, scale changes) improve classification. A temporal transformer can attend to motion patterns (smooth drone flight vs. flapping bird motion) after SE(3)-equivariant spatial encoding.
+
+%   \item \textbf{Interpretability.} Equivariant features have clear geometric meaning (principal axes, scale magnitudes), aiding debugging and analysis.
+% \end{enumerate}
+
+% \textbf{Trade-off accepted:}
+% SE(3)-equivariant layers are computationally heavier than PointNet. We mitigate this by:
+% \begin{itemize}
+%   \item Using compact Gaussian representations (hundreds to thousands of primitives)
+%   \item Implementing efficient SE(3) layers (e.g., E(n) GNN-style message passing)
+%   \item Comparing against PointNet baselines to quantify the cost-benefit
+% \end{itemize}
+
+% \textbf{Validation:}
+% Chapter~\ref{cha:experiments}, Section~\ref{sec:ablation_equivariance} compares SE(3)-equivariant models vs. PointNet baselines on rotated test data and measures inference time.
+
+% \section{Design Axis 6: Temporal Modeling (3D vs. 4D)}
+
+% \subsection{Design Question}
+% Should we classify objects based on per-frame 3D reconstructions (ignoring temporal information), or should we leverage temporal changes in 4D Gaussian parameters?
+
+% \subsection{Alternatives Considered}
+
+% \paragraph{Per-Frame 3D Classification:}
+% \begin{itemize}
+%   \item[+] Simpler; no need for temporal correspondence
+%   \item[+] Faster inference (process each frame independently)
+%   \item[-] Ignores motion cues that distinguish drones from birds
+% \end{itemize}
+
+% \paragraph{Temporal Aggregation (RNN, LSTM):}
+% \begin{itemize}
+%   \item[+] Natural for sequential data
+%   \item[-] Sequential processing (no parallelization); difficult with SE(3) equivariance
+% \end{itemize}
+
+% \paragraph{Temporal Transformer over 4D Features:}
+% \begin{itemize}
+%   \item[+] Parallel processing; flexible attention to temporal windows
+%   \item[+] Compatible with SE(3) encoders
+%   \item[-] Quadratic complexity in sequence length
+% \end{itemize}
+
+% \subsection{Our Choice: 4D Gaussian Dynamics with Temporal Transformer}
+
+% \textbf{Choice:} We represent objects as sequences of 3D Gaussians over time (forming 4D representations) and classify using a \textbf{temporal transformer} over frame embeddings.
+
+% \textbf{Justification:}
+% \begin{enumerate}
+%   \item \textbf{Central hypothesis (RQ2).} This thesis hypothesizes that \textbf{temporal dynamics} (changes in Gaussian position, scale, and rotation) provide discriminative features. Drones exhibit smooth, physics-constrained motion; birds exhibit flapping, agile maneuvers. Per-frame 3D classification cannot capture this.
+
+%   \item \textbf{Motion as strong prior.} Appearance (color, texture) of small distant objects is unreliable. Motion patterns are more robust: rotor-induced micro-oscillations, smooth translation (drones) vs. wing flapping, irregular motion (birds).
+
+%   \item \textbf{Efficient sequence modeling.} Temporal transformers can attend to all frames in a short clip (10--30 frames) in parallel, unlike RNNs which require sequential processing. This aligns with our latency budget.
+
+%   \item \textbf{Compatibility with SE(3) equivariance.} We can encode each frame with an SE(3)-equivariant network to get rotation-invariant spatial features, then apply a standard transformer over time. This modular design is clean and effective.
+% \end{enumerate}
+
+% \textbf{Trade-off accepted:}
+% Requires maintaining temporal correspondence (tracking Gaussians across frames) or reconstructing short clips as 4D Gaussians. We address this by:
+% \begin{itemize}
+%   \item Using 4D Gaussian splatting methods (Section~\ref{sec:4d_gaussian_reconstruction}) that output temporally coherent primitives
+%   \item Fallback to per-frame reconstruction + optical flow for correspondence if needed
+% \end{itemize}
+
+% \textbf{Validation:}
+% Chapter~\ref{cha:experiments}, Section~\ref{sec:ablation_temporal} compares per-frame 3D classification vs. temporal 4D classification, and ablates sequence length.
+
+% \section{Design Space Summary}
+
+% Table~\ref{tab:design_space_summary} summarizes our design choices across all axes, linking each to the constraints in Chapter~\ref{cha:problem_setting} and the comparative analysis in Chapter~\ref{cha:background}.
+
+% \begin{table}[h]
+% \centering
+% \small
+% \begin{tabular}{p{3.5cm}p{3cm}p{5cm}p{2cm}}
+% \toprule
+% \textbf{Design Axis} & \textbf{Our Choice} & \textbf{Primary Justification} & \textbf{Validation} \\
+% \midrule
+% Detection vs. Tracking & Multi-view TBD & Small objects, low per-frame SNR & Sec.~\ref{sec:ablation_tbd} \\
+% Multi-View Fusion & Early (3D Gaussian) & Known calibration, metric 3D goal & Sec.~\ref{sec:ablation_fusion} \\
+% 3D Representation & Gaussians & Alignment with feed-forward, temporal extension & Sec.~\ref{sec:ablation_representation} \\
+% Depth Estimation & Pixel-wise & Symmetric objects, textureless sky & Sec.~\ref{sec:ablation_depth} \\
+% Calibration & Known + refinement & Surveillance scenario, metric accuracy & Sec.~\ref{sec:ablation_calibration} \\
+% Classification & SE(3)-equivariant & Arbitrary orientations, generalization & Sec.~\ref{sec:ablation_equivariance} \\
+% Temporal Modeling & 4D dynamics & Central hypothesis (RQ2), motion cues & Sec.~\ref{sec:ablation_temporal} \\
+% \bottomrule
+% \end{tabular}
+% \caption{Summary of design space exploration. Each choice is justified by problem constraints and validated experimentally in Chapter~\ref{cha:experiments}.}
+% \label{tab:design_space_summary}
+% \end{table}
+
+% \section{Alternative Pipelines Considered}
+
+% To further demonstrate systematic design exploration, we briefly describe \textbf{alternative end-to-end pipelines} that were considered but rejected:
+
+% \subsection{Alternative 1: Per-View 2D Detection + Late Fusion}
+% \begin{itemize}
+%   \item Run YOLO on each camera independently → fuse detections via 3D projection + NMS
+%   \item Classify from multi-view 2D crops (late fusion of logits)
+%   \item \textbf{Rejected because:} Per-frame 2D detection is fragile for small objects; late fusion loses geometric multi-view constraints
+% \end{itemize}
+
+% \subsection{Alternative 2: Voxel-Based Occupancy + 3D CNN Classification}
+% \begin{itemize}
+%   \item Ray-march multi-view RGB to predict occupancy grid
+%   \item Process voxel grid with 3D CNN (e.g., MinkowskiNet)
+%   \item \textbf{Rejected because:} Cubic memory cost for large airspace; difficult to capture temporal dynamics in voxel grid; computationally heavy on edge devices
+% \end{itemize}
+
+% \subsection{Alternative 3: Pose-Free Reconstruction + PointNet Classification}
+% \begin{itemize}
+%   \item Use FreeSplatter to estimate poses and 3D Gaussians jointly
+%   \item Sample point cloud, classify with PointNet
+%   \item \textbf{Rejected because:} We have known calibration (should exploit it); pose ambiguity for small symmetric objects; PointNet is not SE(3)-equivariant; no temporal modeling
+% \end{itemize}
+
+% \subsection{Our Pipeline}
+% \begin{itemize}
+%   \item Multi-view TBD segmentation → cost-volume-based Gaussian reconstruction → SE(3)-equivariant temporal classifier → trajectory-based pose refinement
+%   \item This pipeline systematically addresses the limitations of alternatives while leveraging our problem-specific constraints (known calibration, small objects, temporal dynamics hypothesis)
+% \end{itemize}
+
+% \section{Chapter Summary}
+
+% This chapter has provided explicit design rationale for each component of our pipeline:
+% \begin{itemize}
+%   \item \textbf{Track-before-detect} for small, low-SNR objects
+%   \item \textbf{Early 3D Gaussian fusion} leveraging known calibration
+%   \item \textbf{Cost-volume depth} for symmetric objects and textureless backgrounds
+%   \item \textbf{SE(3)-equivariant classification} for arbitrary orientations
+%   \item \textbf{Temporal 4D dynamics} as the central discriminative feature
+% \end{itemize}
+
+% Each choice is grounded in the problem constraints (Chapter~\ref{cha:problem_setting}) and comparative analysis (Chapter~\ref{cha:background}). Chapter~\ref{cha:method} will now describe the implementation of this pipeline in detail, and Chapter~\ref{cha:experiments} will validate the design choices through ablation studies.
+

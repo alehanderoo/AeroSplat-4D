@@ -1,0 +1,199 @@
+# =============================================================================
+# DepthSplat Inference Pipeline Configuration
+# =============================================================================
+# Unified configuration for the entire inference pipeline.
+# 
+# Environment variables can be used with the ${VAR_NAME} syntax.
+# Default values can be specified as ${VAR_NAME:default_value}
+
+pipeline:
+  name: "depthsplat-inference"
+  version: "1.0.0"
+
+# =============================================================================
+# Source Configuration
+# =============================================================================
+
+sources:
+  mode: "rtsp"  # "rtsp", "file", "simulator"
+  
+  # RTSP sources (production or simulator)
+  rtsp:
+    urls:
+      - "rtsp://localhost:8554/cam_01"
+      - "rtsp://localhost:8554/cam_02"
+      - "rtsp://localhost:8554/cam_03"
+      - "rtsp://localhost:8554/cam_04"
+      - "rtsp://localhost:8554/cam_05"
+    
+    # Connection settings
+    latency: 100  # ms
+    protocols: "tcp"  # "tcp", "udp", "http"
+    retry_interval: 5  # seconds
+    max_retries: -1  # -1 for infinite
+  
+  # File sources (for testing)
+  files:
+    # directory: "/home/sandro/thesis/renders/5cams_08-01-26_drone_50m"
+    directory: "/home/sandro/thesis/renders/5cams_10-01-26"
+    pattern: "cam_{cam_id}/rgb/rgb_{frame:04d}.png"
+    fps: 30
+    loop: true
+  
+  # Simulator settings (for development)
+  simulator:
+    # directory: "/home/sandro/thesis/renders/5cams_08-01-26_drone_50m"
+    directory: "/home/sandro/thesis/renders/5cams_10-01-26"
+    host: "0.0.0.0"
+    port: 8554
+    fps: 30
+    loop: true
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+
+model:
+  # PyTorch checkpoint (used for inference)
+  checkpoint_path: "/home/sandro/thesis/code/depthsplat/outputs/objaverse_white_small_gauss/checkpoints/epoch_0-step_100000.ckpt"
+  
+  # Input specification
+  input:
+    num_cameras: 5
+    channels: 3
+    height: 256
+    width: 256
+    format: "RGB"  # "RGB" or "BGR"
+  
+  # Preprocessing
+  preprocessing:
+    resize_mode: "bilinear"
+    normalize:
+      mean: [0.485, 0.456, 0.406]  # ImageNet
+      std: [0.229, 0.224, 0.225]
+  
+  # Output specification
+  output:
+    positions: true
+    covariances: true
+    colors: true
+    opacities: true
+
+# =============================================================================
+# Pipeline Configuration
+# =============================================================================
+
+deepstream:
+  gpu_id: 0
+  
+  # Muxer settings (for batch processing)
+  muxer:
+    batch_size: 5
+    width: 640
+    height: 480
+    batched_push_timeout: 33333  # μs (30 FPS)
+    sync_inputs: true
+    live_source: true
+    nvbuf_memory_type: 0  # NVMM
+  
+  # Inference settings
+  inference:
+    config_file: "config/deepstream/nvinfer_config.txt"
+    interval: 0  # Process every frame
+    
+  # Queue settings
+  queue:
+    max_size_buffers: 2
+    leaky: "downstream"
+
+# =============================================================================
+# Output Configuration
+# =============================================================================
+
+output:
+  # 4DGS buffer
+  buffer:
+    max_frames: 120  # 4 seconds at 30 FPS
+
+  # Export settings
+  export:
+    enabled: false
+    format: "ply"  # "ply", "splat", "npz"
+    directory: "output/gaussians"
+
+# =============================================================================
+# Visualization Configuration (Web Frontend)
+# =============================================================================
+
+visualization:
+  enabled: true
+
+  # WebSocket server settings
+  websocket:
+    host: "0.0.0.0"
+    port: 8765
+
+  # Render settings for 3DGS output
+  render:
+    width: 512
+    height: 512
+    jpeg_quality: 85
+
+  # Input thumbnail settings
+  thumbnails:
+    width: 192
+    height: 108
+
+  # View mode settings
+  view:
+    default_mode: "orbit"  # "orbit", "front", "top", "side", "input_match"
+    orbit_speed_deg_per_sec: 15.0
+
+  # Target FPS for visualization stream
+  max_fps: 30
+
+  # Detection-based cropping settings
+  detection:
+    enabled: true
+    # Path to ground truth JSON (Isaac Sim exports)
+    # In production, this will be replaced by a track-before-detect service
+    # gt_path: "/home/sandro/thesis/renders/5cams_08-01-26_drone_50m/drone_camera_observations.json"
+    gt_path: "/home/sandro/thesis/renders/5cams_10-01-26/drone_camera_observations.json"
+    # Crop size determines normalized focal length: fx_norm = fx_pixels / crop_size
+    # With fx=1946.6 pixels:
+    #   crop_size=256  -> fx_norm=7.6 (too high, outside training distribution)
+    #   crop_size=1024 -> fx_norm=1.9 (reasonable, closer to training)
+    #   crop_size=1280 -> fx_norm=1.5 (good match to training)
+    # The crop is resized to model input size (256x256) after extraction.
+    crop_size: 1024  # Size of cropped region centered on detected object
+
+  # Ground truth depth visualization
+  gt_depth:
+    enabled: true
+    # base_path: "/home/sandro/thesis/renders/5cams_08-01-26_drone_50m"
+    base_path: "/home/sandro/thesis/renders/5cams_10-01-26"
+    depth_near: 0.5  # Near plane for depth colormap (meters)
+    depth_far: 100.0  # Far plane for depth colormap (meters)
+
+# =============================================================================
+# Monitoring Configuration
+# =============================================================================
+
+monitoring:
+  # Prometheus metrics
+  metrics:
+    enabled: true
+    host: "0.0.0.0"
+    port: 9090
+    
+  # Logging
+  logging:
+    level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+    format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    file: null  # Set to path to enable file logging
+    use_colors: true
+    
+  # Performance tracking
+  performance:
+    log_interval: 100  # frames
+    track_memory: true

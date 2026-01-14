@@ -1,0 +1,27 @@
+# DepthSplat Inference Pipeline Requirements
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+numpy>=1.20.0
+opencv-python>=4.5.0
+pyyaml>=6.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=3.0.0
+
+# Optional: For actual RTSP streaming (GStreamer)
+# Install system packages instead:
+#   apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
+
+
+# Optional: TensorRT and DeepStream (Phase 3+)
+# tensorrt>=8.6.0
+# pycuda>=2022.1
+
+# Optional: ONNX conversion
+# onnx>=1.14.0
+# onnxruntime>=1.15.0
+
+# Monitoring and metrics
+# prometheus-client>=0.17.0

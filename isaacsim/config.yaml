@@ -1,0 +1,169 @@
+# IsaacSim Multi-Camera Drone Rendering Workflow Configuration
+# This YAML centralizes all settings for scene loading, camera setup, drone animation, and rendering
+
+# =====================================================================
+# Global Timeline Settings
+# =====================================================================
+# Frames per second for the entire workflow (cameras, drone animation, rendering)
+fps: 30.0
+
+# =====================================================================
+# Scene Configuration
+# =====================================================================
+scene:
+  # Path to the USD scene file to load
+  # path: "/home/sandro/thesis/assets/AECO_CityTowerDemoPack_NVD@10011/Demos/AEC/TowerDemo/CityTowerDemopack/World_CityTowerDemopack.usd"
+  path: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Environments/Outdoor/Rivermark/rivermark.usd"
+  
+  # Prim path where the scene will be loaded
+  prim_path: "/World/CityScene"
+  
+  # # Lighting configuration
+  # lighting:
+  #   dome_light:
+  #     enabled: true
+  #     prim_path: "/World/DomeLight"
+  #     intensity: 1000.0
+  #     exposure: 0.0
+    
+  #   distant_light:
+  #     enabled: true
+  #     prim_path: "/World/DistantLight"
+  #     intensity: 3000.0
+  #     angle: 1.0
+  #     # Rotation as [pitch, yaw, roll] in degrees
+  #     rotation: [-45.0, 30.0, 0.0]
+
+# =====================================================================
+# Camera Configuration
+# =====================================================================
+cameras:
+  # Auto-detect scene parameters (up axis, unit scale)
+  auto_detect_scene: true
+  
+  # Number of cameras in circular rig (1-8)
+  num_cameras: 5
+  
+  # Circular rig geometry
+  side_meters: 10.0           # Diameter of circle in scene units
+  cam_height: 7.0               # Height of cameras above aim point reference (CityScene 6m ground level + 1m offset)
+  aim_point_height_offset: 10.0  # Vertical offset of aim point from camera height
+  rotation_offset: 0.0
+  #-1.5708   # Initial rotation offset (radians, -π/2 by default)
+  
+  # Position offsets for the camera circle center
+  position_offset_x: 0.0
+  position_offset_y: 0.0
+  
+  # Render resolution
+  resolution: [2560, 1440]
+
+  # Camera type - references intrinsics defined in cam_intrinsics.yaml
+  # Available types: simple_pinhole, kannala_brandt, no_distortion, advanced_pinhole,
+  #                  fisheye, iphone_x_video, traffic_cam_example, ip_cam_generic_1080p
+  camera_type: "ip_cam_2k"
+  
+  # Optional overrides for focus distance (null = auto-calculate from aim point)
+  focus_distance: null
+
+# =====================================================================
+# Object Configuration (drone, bird, etc.)
+# =====================================================================
+drone:
+  # Path to the object USD/FBX file to load
+  # Asset type is auto-detected from the file path (keywords: bird, eagle, drone, etc.)
+
+  # Drone example:
+  usd_path: "/home/sandro/thesis/assets/drones/ofm-seeker-drone_c8fed575-ee29-4297-91f5-9a0f97baa042/ofm-seeker-drone_2K_c55c3fe7-e3f2-4dcd-9fff-175121f13263.usdc"
+
+  # Bird example:
+  # usd_path: "/home/sandro/thesis/assets/birds/white-eagle-animation-fast-fly/source/Eagle Fly/EAGLE FLY.fbx"
+
+  # Path where the object will be loaded in the stage
+  prim_path: "/World/Drone"
+
+  # Waypoint the object should fly through (world coordinates)
+  waypoint: [0.0, 0.0, 2.0]
+  
+  # Total flight distance in scene units
+  flight_distance: 8.0
+  
+  # Height offset from waypoint
+  flight_height_offset: 15.0
+  
+  # Flight direction unit vector   
+  # Fly along X axis
+  flight_direction: [1.0, 0.0, 0.0]
+  
+  # Wrap drone with a mover parent prim (avoids modifying original asset)
+  wrap_with_mover: true
+  mover_prim_path: "/World/DroneMover"
+  
+  # Animation timeline settings
+  timeline:
+    start_frame: 1.0
+    middle_frame: 60.0
+    end_frame: 120.0
+
+# =====================================================================
+# Rendering Configuration
+# =====================================================================
+render:
+  # Number of frames to render
+  num_frames: 120
+  
+  # Number of cameras to render from (should match cameras.num_cameras)
+  num_cameras: 5
+  
+  # render base path
+  base_path: "/home/sandro/thesis/renders"
+
+  # Output directory for rendered images (auto-generated if null)
+  # Format: {num_cameras}cams_{DD-MM-YY}
+  output_dir: null
+  
+  # Enable/disable different render passes
+  passes:
+    rgb: true
+    depth: true
+    instance_segmentation: true
+    semantic_segmentation: true
+  
+  # Rendering backend settings
+  backend:
+    # Use RTX (nvidia) or CPU rendering
+    renderer: "rtx"
+    
+    # Number of samples per pixel for anti-aliasing
+    samples_per_pixel: 64
+    
+    # Denoiser to use: "optix", "oidn", or null for no denoising
+    denoiser: "optix"
+
+# =====================================================================
+# Execution Control
+# =====================================================================
+execution:
+  # Which steps to run
+  steps:
+    load_scene: true
+    load_drone: true
+    position_cameras: true
+    animate_drone: true
+    render: true
+  
+  # Enable verbose logging
+  verbose: true
+  
+  # Wait for scene to settle before rendering (frames)
+  warmup_frames: 0
+
+# =====================================================================
+# Debug & Export
+# =====================================================================
+debug:
+  # Export frame records and annotations
+  export_frame_records: true
+  
+  # Print debug info during execution
+  print_debug_info: true

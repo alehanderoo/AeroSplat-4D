@@ -1,0 +1,34 @@
+# Objaverse dataset configuration for object-centric 3D Gaussian Splatting
+defaults:
+  - view_sampler: object_centric
+
+name: objaverse
+roots: [datasets/objaverse]
+
+# Object-centric depth bounds (tighter than scene-level)
+# Based on camera radius ~2.1-2.8 and object bounding sphere ~1.5
+near: 0.5
+far: 5.0
+
+# Image settings
+image_shape: [256, 256]
+background_color: [0.0, 0.0, 0.0]
+cameras_are_circular: true  # Cameras arranged in circle around object
+
+# Data options
+augment: true
+use_masks: true
+use_depth: true
+
+# View configuration
+baseline_epsilon: 1e-3
+max_fov: 100.0
+
+# Filtering
+skip_bad_shape: true
+shuffle_val: true
+
+# Testing
+test_len: -1
+test_chunk_interval: 1
+train_times_per_scene: 1

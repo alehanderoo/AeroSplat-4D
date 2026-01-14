@@ -1,0 +1,6 @@
+name: object_centric
+num_context_views: 4
+num_target_views: 2
+min_context_views: 2
+sampling_strategy: farthest_point
+target_from_context: false

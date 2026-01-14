@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DepthSplat Pipeline Visualization</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        accent: '#8b5cf6',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+
+        /* Loading animation */
+        @keyframes pulse-ring {
+            0% {
+                transform: scale(0.5);
+                opacity: 0;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(1.2);
+                opacity: 0;
+            }
+        }
+
+        .pulse-ring::before {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            border: 2px solid currentColor;
+            animation: pulse-ring 1.5s ease-out infinite;
+        }
+
+        /* Smooth image transitions */
+        .stream-image {
+            transition: opacity 0.1s ease-out;
+        }
+
+        /* Status indicators */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Column styling - all visualization columns use same sizing */
+        .viz-column {
+            min-width: 132px;
+            max-width: 176px;
+        }
+
+        /* Input column: same width constraints as viz-column */
+        .input-column {
+            min-width: 132px;
+            max-width: 176px;
+        }
+
+        /* Input feed cells: square container like viz columns, but images maintain 16:9 with object-contain */
+        .input-feed-cell {
+            aspect-ratio: 1 / 1;
+        }
+
+        .input-feed-cell img {
+            object-fit: contain !important;
+        }
+
+        .viz-column-header {
+            font-size: 0.7rem;
+            text-align: center;
+            padding: 4px;
+            background: #374151;
+            border-radius: 4px 4px 0 0;
+        }
+
+        /* Aspect ratio for input feeds (16:9) */
+        .aspect-video-custom {
+            aspect-ratio: 16 / 9;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-900 text-white h-screen overflow-hidden flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-gray-800 border-b border-gray-700 px-4 py-2 flex items-center justify-between">
+        <div class="flex items-center space-x-4">
+            <h1 class="text-lg font-bold text-white">DepthSplat</h1>
+            <span class="text-xs text-gray-400">Pipeline Visualization</span>
+        </div>
+
+        <div class="flex items-center space-x-6">
+            <!-- Connection Status -->
+            <div class="flex items-center space-x-2" id="connection-status">
+                <span class="status-dot bg-red-500"></span>
+                <span class="text-sm text-gray-400">Disconnected</span>
+            </div>
+
+            <!-- FPS Display -->
+            <div class="flex items-center space-x-2">
+                <span class="text-sm text-gray-400">FPS:</span>
+                <span class="text-sm font-mono text-green-400" id="fps-display">--</span>
+            </div>
+
+            <!-- Latency Display -->
+            <div class="flex items-center space-x-2">
+                <span class="text-sm text-gray-400">Latency:</span>
+                <span class="text-sm font-mono text-yellow-400" id="latency-display">-- ms</span>
+            </div>
+
+            <!-- Pause/Resume Button -->
+            <button id="pause-btn" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors">
+                Pause
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex p-2 gap-2 overflow-hidden">
+
+        <!-- Column 1: Input Cameras -->
+        <div class="input-column flex flex-col gap-1">
+            <div class="viz-column-header text-gray-300">Input Cameras</div>
+            <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="input-feeds">
+                <!-- Camera feeds will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Column 2: Cropped Views -->
+        <div class="viz-column flex flex-col gap-1">
+            <div class="viz-column-header text-gray-300">Cropped Views</div>
+            <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="cropped-feeds">
+                <!-- Cropped feeds will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Column 3: Ground Truth Depth -->
+        <div class="viz-column flex flex-col gap-1">
+            <div class="viz-column-header text-blue-300">GT Depth</div>
+            <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="gt-depth-feeds">
+                <!-- GT depth feeds will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Column 4: Monocular Depth -->
+        <div class="viz-column flex flex-col gap-1">
+            <div class="viz-column-header text-purple-300">Mono Depth</div>
+            <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="mono-depth-feeds">
+                <!-- Mono depth feeds will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Column 5: Predicted Depth -->
+        <div class="viz-column flex flex-col gap-1">
+            <div class="viz-column-header text-green-300">Predicted Depth</div>
+            <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="predicted-depth-feeds">
+                <!-- Predicted depth feeds will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Column 6: Silhouette -->
+        <div class="viz-column flex flex-col gap-1">
+            <div class="viz-column-header text-orange-300">Silhouette</div>
+            <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="silhouette-feeds">
+                <!-- Silhouette feeds will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Column 7: 3DGS Render + Metrics -->
+        <div class="flex-1 flex flex-col min-w-[300px]">
+            <div class="flex items-center justify-between mb-1">
+                <div class="viz-column-header text-cyan-300 flex-1">3D Gaussian Splat</div>
+
+                <!-- View Mode Selector -->
+                <div class="flex items-center space-x-2 ml-2">
+                    <span class="text-xs text-gray-500">View:</span>
+                    <select id="view-mode"
+                        class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary">
+                        <option value="orbit">Orbit</option>
+                        <option value="front">Front</option>
+                        <option value="top">Top</option>
+                        <option value="side">Side</option>
+                        <option value="input_match">Match Input</option>
+                    </select>
+                </div>
+            </div>
+
+            <div
+                class="flex-1 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex items-center justify-center">
+                <div class="relative w-full h-full">
+                    <img id="gaussian-render" class="stream-image w-full h-full object-contain"
+                        alt="3D Gaussian Splat render" />
+                    <div id="render-placeholder" class="absolute inset-0 flex items-center justify-center bg-gray-800">
+                        <div class="text-center text-gray-500">
+                            <svg class="w-16 h-16 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                    d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" />
+                            </svg>
+                            <p class="text-sm">Waiting for render...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Render Stats -->
+            <div class="mt-2 bg-gray-800 rounded-lg border border-gray-700 p-2">
+                <div class="grid grid-cols-3 gap-x-3 gap-y-1 text-xs">
+                    <div>
+                        <span class="text-gray-400">Encoder:</span>
+                        <span class="font-mono text-blue-400 ml-1" id="encoder-time">-- ms</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-400">Decoder:</span>
+                        <span class="font-mono text-purple-400 ml-1" id="decoder-time">-- ms</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-400">Gaussians:</span>
+                        <span class="font-mono text-green-400 ml-1" id="gaussian-count">--</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-400">Total:</span>
+                        <span class="font-mono text-yellow-400 ml-1" id="total-latency">-- ms</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-400">Network:</span>
+                        <span class="font-mono text-cyan-400 ml-1" id="network-latency">-- ms</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-400">Frame:</span>
+                        <span class="font-mono text-gray-400 ml-1" id="frame-id">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 border-t border-gray-700 px-4 py-1">
+        <div class="flex items-center justify-between text-xs text-gray-500">
+            <div class="flex items-center space-x-4">
+                <span>Clients: <span class="font-mono text-gray-400" id="client-count">1</span></span>
+            </div>
+            <div>
+                DepthSplat Inference Pipeline v1.0
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script src="app.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,468 @@
+\chapter{Methodology}
+\label{chap:method}
+
+\section{Introduction: The Optical Imperative for Aerial Surveillance}
+
+The widespread availability of small Unmanned Aerial Vehicles creates challenges for airspace security.
+Inexpensive commercial drones, often smaller than 50 centimeters, can disrupt infrastructure and threaten privacy.
+Conventional radar systems are designed to detect metallic aircraft and have challenges distinguishing plastic airframes from birds.
+Directed microphones suffer from environmental noise and rely on the acoustic signature of active propulsion.
+Radio frequency analysis fails when signals are jammed or when drones operate via optical fiber cables.
+Furthermore, high frequency systems are too expensive for widespread perimeter monitoring.
+
+These factors guided the development of a passive optical sensing system.
+However, the optical domain presents it's own challenges.
+Distant drones and birds appear as indistinct shapes against the sky, rendering classification based on individual images unreliable.
+Moreover, edge deployment requires systems that operate with low latency on hardware with limited power.
+
+This chapter describes a methodology for a passive 3D occupancy prediction, classification, and tracking system using multiple cameras.
+By combining principles from multiview geometry, neural rendering via 3D Gaussian Splatting, and temporal sequence modeling, we propose an architecture that addresses the limitations of detection based on appearance.
+The approach includes four main components: synthetic data generation, volumetric segmentation, feedforward 3D reconstruction, and temporal classification robust to rotation.
+
+\section{The Physics of Sensing and the Detection Implications}
+
+To engineer a robust solution, one must first quantify the information-theoretic limits of the sensing channel.
+The challenge in long-range optical surveillance is the degradation of spatial bandwidth as distance increases.
+
+\subsection{The Spatial Bandwidth Limit}
+
+According to the IEC 62676-4 standard, reliable object recognition requires a pixel density of 125 Pixels Per Meter (PPM).
+In a typical perimeter monitoring scenario with a target at distance $d = 50$ meters, utilizing a standard 2K sensor ($1920 \times 1080$ pixels) with a 90-degree horizontal field of view,
+the pixel density drops to approximately 19.2 PPM.
+At this resolution, a drone with a 50cm wingspan will be represented by 9.6 pixels.
+The Nyquist-Shannon sampling theorem dictates that high-frequency spatial features (propellers) will be lost due to aliasing.
+Consequently, the signal entering the classification pipeline is not a structured image of an object,
+but a low-frequency approximation contaminated by sensor noise and atmospheric point spread functions.
+
+This physical constraint invalidates the concept of deep learning architectures that rely on texture-rich feature extraction.
+It necessitates an engineering pivot from spatial feature extraction to temporal and geometric feature extraction.
+While the spatial channel capacity is exceeded, the temporal channel capacity remains available: if a target is tracked over $T$ frames and exhibits characteristic motion,
+the integration of information over time can recover the discriminative capacity lost in spatial downsampling.
+
+\subsection{The Signal-to-Noise Ratio and the Failure of Detect-Before-Track}
+
+The dominant paradigm in computer vision is Detect-Before-Track (DBT), exemplified by architectures such as YOLO~\cite{redmon_yolo_2016},
+Faster R-CNN~\cite{ren_faster_2015}, and DETR~\cite{carion_end--end_2020}.
+These systems operate on a decision threshold applied to single frames: if the confidence score of a region exceeds a threshold $\tau$,
+it is declared a detection; otherwise, it is discarded.
+
+Analysis of the Drone-vs-Bird~\cite{coluccia_drone-vs-bird_2025} and Anti-UAV benchmarks reveals the failure of DBT in low signal-to-noise ratio scenarios.
+When a target occupies fewer than $16 \times 16$ pixels, the deep feature downsampling in Convolutional Neural Networks reduces the target representation to a single feature vector,
+often indistinguishable from background noise.
+Standard anchor boxes, designed for larger objects like pedestrians or vehicles, fail to generate high Intersection-over-Union proposals for these small targets.
+Consequently, widely deployed models see their mean Average Precision (MAP) plummet from above 0.95 on large drones to below 0.65 on bird-sized objects at range.
+
+Furthermore, DBT systems are incapable of detecting targets with a Signal-to-Clutter Ratio below approximately 3 to 5 dB.
+In scenarios involving cloud clutter, haze, or low light, the target signal may be buried within the noise floor.
+A threshold high enough to suppress false alarms will inevitably suppress the target; a threshold low enough to detect the target will trigger the tracker with false positives,
+leading to a computational explosion in the data association phase.
+
+\section{Synthetic Data Generation}
+
+The absence of large-scale, annotated, multi-view datasets for drones and birds is a challenge for the development of robust classification systems.
+We address this limitation through a synthetic data pipeline utilizing NVIDIA Isaac Sim~\cite{nvidia_isaac_2025}.
+
+\subsection{Dataset Construction}
+
+Isaac Sim provides a physically-based simulation environment capable of generating training data that accurately models the optical complexities of real-world aerial surveillance.
+The synthetic data pipeline comprises the following elements:
+
+\begin{enumerate}
+    \item \textbf{Asset Diversity.} We import openly available 3D models of various drones and birds with flight animations.
+    These models capture the geometric and kinematic differences between mechanical and biological flyers that form the discriminative basis for classification.
+    
+    \item \textbf{Environmental Simulation.} The simulation incorporates realistic atmospheric effects including volumetric fog and haze to model contrast reduction at extended ranges,
+    variable lighting conditions from dawn to dusk, and dynamic cloud formations that create the textureless backgrounds characteristic of aerial surveillance scenarios.
+
+    \item \textbf{Sensor Modeling.} To prevent the network from overfitting to idealized simulations,
+    we apply sensor noise modeling including Gaussian read noise and Poisson shot noise to mimic low-light sensor grain,
+    motion blur from object movement and camera vibration, and rolling shutter artifacts characteristic of CMOS sensors.
+
+    \item \textbf{Calibration.} We slightly change camera intrinsic and extrinsic parameters to train the network to be robust to calibration drift,
+    a common issue in pole-mounted outdoor cameras exposed to thermal cycling and mechanical vibration.
+\end{enumerate}
+
+\subsection{Ground Truth Generation}
+
+The synthetic environment provides ground truth annotations that would be impossible to obtain from real-world data: per-pixel depth maps enabling geometric supervision,
+instance segmentation masks for each flying object, 3D trajectories with millimeter-level accuracy, and per-frame 3D Gaussian Splatting parameters that serve as reconstruction targets.
+
+\section{Multi-View Volumetric Track-Before-Detect}
+
+To address the limitations of Detect-Before-Track, we engineer a Track-Before-Detect (TBD) pipeline that processes simple pixel differences from multiple frames before making a detection decision,
+enabling the detection of targets with signal levels too low for conventional methods.
+
+\subsection{Theoretical Foundation}
+
+Classical TBD methods such as Dynamic Programming TBD or Particle Filter TBD are effective but suffer from computational complexity of $O(N \times V \times K)$ for state space $N$,
+velocity discretization $V$, and temporal window $K$.
+We address this by using multi-view consistency from our calibrated camera network to constrain the TBD search space.
+
+\subsection{Volumetric Voting Mechanism}
+
+The algorithm proceeds through the following stages:
+
+\todo{make algorithm as in papers}
+
+\begin{enumerate}
+    \item \textbf{Monitored Volume Definition.} We define a volume $\mathcal{V} \subset \mathbb{R}^3$ monitored by $N \geq 5$ calibrated cameras with known intrinsic matrices $\mathbf{K}_n$ and extrinsic transformations $[\mathbf{R}_n | \mathbf{t}_n]$.
+The volume is discretized into a voxel grid with resolution determined by the minimum resolvable depth difference across the camera network.
+
+    \item \textbf{Ray Marching.} For every pixel $\mathbf{p}$ in every camera $n$ that exceeds a minimal noise floor (significantly lower than a detection threshold),
+we cast a ray $\mathbf{r}_{n,\mathbf{p}}$ into $\mathcal{V}$.
+The ray origin is the camera center $\mathbf{c}_n = -\mathbf{R}_n^T \mathbf{t}_n$ and the direction is $\mathbf{d}_{n,\mathbf{p}} = \mathbf{R}_n^T \mathbf{K}_n^{-1} \tilde{\mathbf{p}}$ where $\tilde{\mathbf{p}}$ is the homogeneous pixel coordinate.
+
+    \item \textbf{Voxel Accumulation.} As rays traverse the volume, they increment the energy state of intersected voxels.
+The energy contribution is weighted by the pixel intensity above the noise floor, providing a measure of evidence rather than a binary vote.
+
+    \item \textbf{Geometric Consistency Filter.} A voxel is considered a candidate if and only if it receives energy from at least 3 distinct camera views.
+This multi-view constraint uses the epipolar geometry of the camera network to filter out single-view noise and phantom artifacts that do not correspond to dynamically moving 3D objects.
+
+    \item \textbf{Temporal Integration.} The energy of candidate voxels is integrated over a sliding temporal window of length $T$.
+A detection is declared only when the accumulated 3D energy density exceeds a threshold, signifying a temporally consistent physical object.
+This temporal integration boosts the signal-to-noise ratio by a factor of $\sqrt{T}$ while the $N$-view constraint eliminates the false positives that fail 2D TBD methods.
+
+    \item \textbf{Visual Hull.} To enhance efficiency, we optionally can sparsely traverse pixel differences, limiting energy accumulation to voxels within the visual hull of the moving object.
+\end{enumerate}
+
+\subsection{Sparse Implementation}
+\todo{Implement the volumetric representation using sparse tensor structures via the Minkowski Engine / octree?}
+% The volumetric representation is implemented using sparse tensor structures via the Minkowski Engine~\cite{Choy2019} to avoid allocating memory for the predominantly empty sky region.
+% Only voxels receiving ray contributions are instantiated, reducing memory consumption from cubic to linear in the number of active voxels.
+
+\section{Feed-Forward 3D Gaussian Reconstruction}
+
+Once a target is localized via the TBD pipeline, the system must reconstruct its 3D form to facilitate classification.
+This presents a challenge: the background is predominantly open sky, providing no texture for classical photometric matching.
+
+\subsection{Architecture Selection: DepthSplat}
+
+Given the limitations of classical photogrammetry and Neural Radiance Fields in sparse-view,
+textureless environments, we select the DepthSplat architecture~\cite{Xu_2025_depthsplat} (see Appendix~\ref{appendix:feedforward-3dgs} for a detailed justification), a feed-forward 3D Gaussian Splatting model.
+Unlike standard 3DGS~\cite{kerbl20233dgs} which requires per-scene optimization through thousands of gradient descent iterations,
+DepthSplat predicts Gaussian parameters directly from input images in a single inference pass.
+
+\paragraph{Dual-Branch Design.} DepthSplat addresses the textureless sky challenge through a dual-branch architecture that combines complementary depth estimation strategies:
+
+\begin{enumerate}
+    \item \textbf{Multi-View Cost Volume Branch:} This branch constructs a plane-sweep cost volume that enforces geometric consistency across views.
+For each depth hypothesis,
+features are warped from source views to the reference view and compared via learned similarity metrics.
+This provides strong constraints where texture exists but fails in uniform regions.
+    
+    \item \textbf{Monocular Depth Branch:} Based on Depth Anything V2~\cite{yang_depth_2024},
+this branch provides strong depth priors learned from large-scale training data.
+It predicts plausible depth even in textureless regions where photometric matching fails,
+preventing the floating artifacts seen in pure cost-volume methods such as MVSplat~\cite{chen_mvsplat_2025}.
+\end{enumerate}
+
+The fusion of these branches ensures robustness: the cost volume prevents depth hallucination common in purely generative methods,
+while the monocular prior prevents artifacts when photometric gradients vanish against the sky.
+
+\subsection{Domain Adaptation for Aerial Objects}
+
+The pre-trained DepthSplat model is adapted for aerial object reconstruction through a two-stage training procedure:
+
+\begin{enumerate}
+    \item \textbf{Object-Centric Pre-training.} Following Lin et al.~\cite{lin_objaverse_2025},
+we pre-train on a curated subset of the Objaverse dataset rather than the full collection.
+Models trained on quality-focused subsets achieve superior performance in object reconstruction tasks compared to those trained on larger,
+uncurated datasets containing noisy geometry.
+
+    \item \textbf{Domain Fine-tuning.} The model is subsequently fine-tuned on our synthetic drone and bird dataset,
+adapting it to the specific geometric characteristics of flying objects including thin structures (rotors, feathers), non-convex shapes,
+and the characteristic scale range of targets at 10-100 meter distances.
+
+    \item \textbf{Silhouette Consistency Loss.} To anchor geometry when photometric gradients vanish,
+we augment the training objective with a silhouette consistency loss that compares rendered alpha masks against segmentation masks from the TBD pipeline.
+This provides geometric supervision independent of texture.
+\end{enumerate}
+
+\subsection{3D Gaussian Parameterization}
+
+The reconstruction output is a set of 3D Gaussian primitives,
+each parameterized by:
+
+\begin{itemize}
+    \item \textbf{Position} $\boldsymbol{\mu} \in \mathbb{R}^3$: The mean location in 3D space.
+    \item \textbf{Covariance} $\boldsymbol{\Sigma} \in \mathbb{R}^{3\times3}$: Decomposed into scale $\mathbf{s} \in \mathbb{R}^3$ and rotation quaternion $\mathbf{q} \in \mathbb{R}^4$ as $\boldsymbol{\Sigma} = \mathbf{R}\mathbf{S}\mathbf{S}^T\mathbf{R}^T$ where $\mathbf{R} = \mathbf{R}(\mathbf{q})$ and $\mathbf{S} = \text{diag}(\mathbf{s})$.
+    \item \textbf{Opacity} $\alpha \in [0,1]$: The transparency of the primitive.
+    \item \textbf{Spherical Harmonics} $\mathbf{c} \in \mathbb{R}^{48}$: View-dependent color encoded as coefficients up to degree 3 (16 coefficients per RGB channel).
+\end{itemize}
+
+These explicit primitives encode rich geometric and appearance information that forms the basis for subsequent classification.
+
+\section{Rotation-Robust 4D Classification Architecture}
+
+The reconstructed 3D representation is not a static artifact but a dynamic entity evolving over time.
+The discrimination between a drone and a bird relies on the temporal characteristics of this evolution: the periodic rotation of propellers versus the rhythmic flapping of wings,
+the rigid-body dynamics of mechanical flight versus the flexible deformation of biological locomotion.
+
+% insert image 2stage_architecture.png
+
+
+\subsection{The Challenge of Attribute Heterogeneity}
+
+A challenge in 3D Gaussian classification is ensuring consistency across arbitrary viewing orientations.
+A drone approaching from the north must be classified identically to one approaching from the east.
+Standard neural networks are not rotation invariant and must learn distinct filters for every possible orientation,
+requiring massive data augmentation and still failing to generalize to novel viewpoints.
+
+The complexity is amplified by the heterogeneous transformation properties of Gaussian attributes under rotation $\mathbf{R} \in SO(3)$:
+
+\begin{itemize}
+    \item \textbf{Positions} transform as vectors: $\boldsymbol{\mu}' = \mathbf{R}\boldsymbol{\mu}$
+    \item \textbf{Covariances} transform as tensors: $\boldsymbol{\Sigma}' = \mathbf{R}\boldsymbol{\Sigma}\mathbf{R}^T$
+    \item \textbf{Quaternions} transform via quaternion multiplication with the rotation
+    \item \textbf{Spherical Harmonics} transform via degree-specific Wigner D-matrices
+    \item \textbf{Opacity} remains invariant as a scalar quantity
+\end{itemize}
+
+This mathematical heterogeneity makes rotation-robust 4DGS classification more complex than standard point cloud classification,
+where all features are either positions or invariant scalars.
+
+\subsection{Two-Stage Architecture Overview}
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=\textwidth]{img/2-stage_classifier_architecture-Page-2.pdf}
+    \caption{Overview of the 4D classification architecture. (a) The input consists of a sequence of 3D Gaussian reconstructions. (b) In Stage 1, a VN-Transformer encodes geometric features into a rotation-invariant representation. (c) This produces a sequence of frame embeddings. (d) In Stage 2, a Mamba State Space Model captures temporal dynamics. (e) Finally, an MLP classification head predicts the object class.}
+    \label{fig:2stage_architecture}
+\end{figure}
+
+We adopt a two-stage architecture, illustrated in Figure~\ref{fig:2stage_architecture}, that separates rotation-invariant feature extraction from temporal processing.
+The process begins with (a) a sequence of 3D Gaussian reconstructions.
+(b) In Stage 1, a VN-Transformer extracts rotation-invariant spatial encodings, producing (c) a sequence of frame embeddings.
+These are processed by (d) Stage 2, a Mamba State Space Model (SSM) for temporal dynamics modeling, followed by (e) a classification head for final prediction.
+This design follows the principle that \emph{invariance should be established early} in the pipeline~\cite{deng_vector_2021}, trading potential discriminative power from full equivariant processing for practical implementation simplicity and training stability.
+
+\begin{equation}
+\hat{y} = f_{\text{temporal}}\left( \left\{ f_{\text{spatial}}(G^{(t)}) \right\}_{t=1}^{T} \right)
+\end{equation}
+
+where $G^{(t)} = \{g_i^{(t)}\}_{i=1}^{M_t}$ is the set of $M_t$ Gaussians at frame $t$,
+$f_{\text{spatial}}$ extracts rotation-invariant per-frame embeddings,
+and $f_{\text{temporal}}$ models the temporal evolution for classification.
+
+
+
+\subsection{Stage 1: Rotation-Equivariant Spatial Encoding}
+
+The spatial encoder must process the heterogeneous Gaussian attributes while producing representations that are invariant to the object's 3D orientation. We employ the VN-Transformer architecture~\cite{assaad_vn-transformer_2023} which processes geometric features equivariantly, while handling non-geometric attributes through early fusion.
+
+\subsubsection{Gaussian Feature Preparation}
+
+Each Gaussian $g_i$ provides attributes with different transformation properties under rotation:
+
+\begin{itemize}
+    \item \textbf{Type-1 Features (Equivariant)}: Positions $\boldsymbol{\mu}_i \in \mathbb{R}^3$ and the principal axes of the covariance matrix $\boldsymbol{\Sigma}_i$ (obtained via eigendecomposition) are represented as 3D vectors that transform under rotation. These are processed directly by VN-Transformer's equivariant layers.
+    \item \textbf{Scalar Features (Invariant)}: Opacity $\alpha_i$ is inherently invariant. Covariance eigenvalues $\lambda_1 \geq \lambda_2 \geq \lambda_3$ provide rotation-invariant shape descriptors. For spherical harmonics, implementing full Wigner D-matrix transformations adds substantial complexity; instead, we extract band energies $E_l = \sum_{m=-l}^{l} |c_l^m|^2$ for each degree $l \in \{0,1,2,3\}$, yielding 4 invariant scalars per color channel (12 total for RGB) \cite{kazhdan_rotation_nodate}.
+\end{itemize}
+
+\subsubsection{VN-Transformer Architecture}
+
+The Vector Neurons framework~\cite{deng_vector_2021} lifts scalar neurons to 3D vectors, representing features as $\mathbf{V} \in \mathbb{R}^{N \times C \times 3}$ where each of $C$ feature channels is a 3D vector that transforms coherently under rotation.
+
+\paragraph{VN-Linear Layer.} Given weight matrix $\mathbf{W} \in \mathbb{R}^{C' \times C}$ and input $\mathbf{V} \in \mathbb{R}^{C \times 3}$, the operation $\mathbf{V}' = \mathbf{W}\mathbf{V}$ applies weights to the channel dimension while leaving the spatial dimension untouched. Since rotation acts on spatial dimensions and linear combination acts on channels, these operations commute, guaranteeing equivariance.
+
+\paragraph{VN-ReLU Layer.} Element-wise nonlinearities break rotation equivariance; the solution learns data-dependent directions for activation. Computing $\mathbf{q} = \mathbf{W}_q\mathbf{V}$ and $\mathbf{k} = \mathbf{W}_k\mathbf{V}$, the output projects $\mathbf{q}$ onto the half-space defined by $\mathbf{k}$ when $\langle\mathbf{q},\mathbf{k}\rangle < 0$. Both projections transform equivariantly, and their inner product remains invariant, preserving equivariance through the nonlinearity.
+
+\paragraph{Frobenius Attention.} VN-Transformer computes attention weights using Frobenius inner products between vector neuron representations:
+\begin{equation}
+\langle \mathbf{V}^{(i)}, \mathbf{V}^{(j)} \rangle_F = \sum_c \mathbf{V}^{(i,c)} \cdot (\mathbf{V}^{(j,c)})^T
+\end{equation}
+This inner product is rotation-invariant since $\langle \mathbf{V}^{(i)}\mathbf{R}, \mathbf{V}^{(j)}\mathbf{R} \rangle_F = \langle \mathbf{V}^{(i)}, \mathbf{V}^{(j)} \rangle_F$ by orthogonality $\mathbf{R}\mathbf{R}^T = \mathbf{I}$. Attention weights $\text{softmax}(\langle \mathbf{Q}, \mathbf{K} \rangle_F / \sqrt{3C})$ are therefore rotation-invariant, while value aggregation with scalar weights and equivariant values produces equivariant outputs.
+
+\subsubsection{Early Fusion of Scalar Attributes}
+
+Following VN-Transformer's design for non-spatial attributes, we extend features from $C \times 3$ to $C \times (3 + d_A)$ matrices, concatenating the 3D vector components with scalar attributes (opacity, eigenvalues, SH band energies) along the feature dimension. The network learns to process both geometric and non-geometric information jointly while maintaining equivariance for the spatial components.
+
+\subsubsection{Approximate Equivariance}
+
+We introduce $\epsilon$-approximate equivariance through bias terms with $\|\text{bias}\| \leq \epsilon \approx 10^{-6}$. 
+This significantly improves numerical stability on accelerator hardware while maintaining effective rotation invariance. 
+Experiments on ModelNet40 show this controlled relaxation improves accuracy from 91.1\% to 95.4\%~\cite{assaad_vn-transformer_2023}.
+
+\subsubsection{VN-Invariant Output}
+
+To produce rotation-invariant frame embeddings for temporal processing, we apply the VN-Invariant layer: learning a local coordinate frame $\mathbf{T} \in \mathbb{R}^{3 \times 3}$ from the features themselves, then expressing features in this frame via $\mathbf{V} \cdot \mathbf{T}^T$. Since both $\mathbf{V}$ and $\mathbf{T}$ transform under rotation, their product remains invariant.
+
+\subsubsection{Frame-Level Aggregation}
+
+Per-Gaussian embeddings $\mathbf{h}_i^{(t)}$ are aggregated into a frame-level representation $\mathbf{z}^{(t)}$ via attention-weighted pooling:
+\begin{equation}
+\mathbf{z}^{(t)} = \sum_{i=1}^{M_t} \alpha_i \mathbf{h}_i^{(t)}, \quad \alpha_i = \frac{\exp(w^T \mathbf{h}_i^{(t)})}{\sum_j \exp(w^T \mathbf{h}_j^{(t)})}
+\end{equation}
+where $w$ is a learned attention vector. This permutation-invariant aggregation handles the variable number of Gaussians $M_t$ across frames.
+
+
+
+
+
+\subsection{Stage 2: Temporal Dynamics Modeling with Mamba4D}
+
+The sequence of frame embeddings $\{\mathbf{z}^{(t)}\}_{t=1}^{T}$ encodes the spatial configuration at each time step.
+The temporal classifier must extract discriminative motion patterns from this sequence to distinguish mechanical from biological flight.
+
+\subsubsection{The Computational Bottleneck of Transformers}
+
+The standard approach for sequence modeling is the Transformer architecture.
+However, Transformers suffer from quadratic complexity $O(T^2)$ with respect to sequence length due to the self-attention mechanism.
+For aerial surveillance, capturing the periodicity of a bird's wing beat (approximately 4--6 Hz) or a drone's maneuver requires a significant temporal window (e.g., $T = 60$ frames at 30 fps).
+At this length, the attention map becomes memory-prohibitive on edge devices.
+
+\subsubsection{Selective State Space Models}
+
+We engineer the temporal classifier using the Mamba4D architecture~\cite{Liu_mamba4D_2025},
+a modern Selective State Space Model representing the first purely SSM-based backbone for 4D point cloud understanding.
+Mamba4D achieves three engineering advantages:
+
+\paragraph{Linear Complexity.} The discrete SSM equations
+\begin{align}
+\mathbf{x}_k &= \bar{\mathbf{A}}\mathbf{x}_{k-1} + \bar{\mathbf{B}}\mathbf{u}_k \\
+\mathbf{y}_k &= \mathbf{C}\mathbf{x}_k + \mathbf{D}\mathbf{u}_k
+\end{align}
+provide $O(T)$ linear scaling versus Transformers' quadratic $O(T^2)$.
+Parameters $\mathbf{A},
+\mathbf{B},
+\mathbf{C}$ are computed as functions of the input (data-dependent/selective),
+enabling the model to focus on relevant temporal features.
+
+\paragraph{Selective Forgetting.} In a surveillance context, tracks are often noisy or interrupted by occlusion.
+Mamba's selective mechanism allows the network to effectively reset its hidden state or ignore noisy inputs dynamically, providing robustness that standard RNNs lack.
+
+\paragraph{Hardware Efficiency.} The selective scan algorithm is engineered to fuse operations into the GPU's fast SRAM,
+minimizing High Bandwidth Memory I/O.
+
+\subsubsection{Disentangled Spatial-Temporal Processing}
+
+Mamba4D disentangles spatial and temporal processing into complementary stages:
+
+\paragraph{Intra-frame Spatial Mamba.} This component encodes local geometric structures within short-term clips using spatial state space modeling over the per-frame Gaussian embeddings.
+
+\paragraph{Inter-frame Temporal Mamba.} This component captures long-range temporal dependencies across the entire video sequence.
+The architecture processes frame-level embeddings through stacked Mamba blocks:
+
+\begin{align}
+\mathbf{F}'_l &= \text{DW}(\text{Linear}(\mathbf{F}_{l-1})) \\
+\mathbf{F}_l &= \text{Linear}(\text{SSM}(\sigma(\mathbf{F}'_l)) \odot \sigma(\text{Linear}(\mathbf{F}_{l-1})))
+\end{align}
+
+where DW is depth-wise convolution,
+$\sigma$ is SiLU activation,
+and SSM is the selective state space model.
+
+\paragraph{No Correspondence Required.} Critically,
+Mamba4D processes dynamic sequences without requiring explicit point correspondence between frames.
+This matches our pipeline where feed-forward reconstruction generates a new,
+unstructured set of Gaussians at each frame.
+The model learns temporal patterns from the sequence of rotation-invariant spatial configurations,
+effectively bypassing the need for explicit feature tracking.
+
+\subsubsection{Scaling Behavior}
+
+Unlike Transformers whose accuracy degrades with sequence length due to attention dilution,
+Mamba4D accuracy improves with longer sequences: from 92.68\% at 24 frames to 93.23\% at 36 frames on action recognition benchmarks~\cite{Liu_mamba4D_2025}.
+This property is essential for capturing the extended temporal patterns that distinguish drone flight dynamics from bird locomotion.
+
+\subsection{Classification Head}
+
+The temporal encoder produces a sequence-level embedding $\mathbf{y}_{\text{temporal}}$ that is passed through a classification head:
+
+\begin{equation}
+\hat{y} = \sigma(\mathbf{W}_c \cdot \mathbf{y}_{\text{temporal}} + \mathbf{b}_c)
+\end{equation}
+
+where $\hat{y} \in [0,1]$ represents the probability of the drone class.
+The model is trained with binary cross-entropy loss:
+
+\begin{equation}
+\mathcal{L} = -\frac{1}{N}\sum_{n=1}^{N} \left[ y_n \log(\hat{y}_n) + (1-y_n)\log(1-\hat{y}_n) \right]
+\end{equation}
+
+\subsection{Discriminative Signals in Gaussian Dynamics}
+
+The architecture is designed to capture discriminative signals identified through domain analysis:
+
+\paragraph{Surface Geometry.} Drones are rigid bodies composed of flat surfaces and slender rotors; birds are organic shapes with curved surfaces.
+The scale and rotation parameters of Gaussians encode local surface geometry: flat ellipsoids for drone body panels versus elongated ellipsoids for feathers.
+
+\paragraph{Motion Blur Encoding.} Propellers spinning at high RPM induce motion blur that manifests as semi-transparent Gaussians in the rotor disk region.
+This is explicitly encoded in the opacity parameter.
+Bird wings, while moving, maintain structural coherence and higher opacity.
+
+\paragraph{Rigid vs.
+Deformable Dynamics.} Drone components maintain fixed spatial relationships during flight (rigid-body motion),
+while bird anatomy exhibits coordinated deformation (wing flexion, body undulation).
+The temporal evolution of Gaussian spatial distributions captures these different motion patterns.
+
+\paragraph{Periodicity Signatures.} Propeller rotation produces high-frequency periodic signals in Gaussian opacity and position,
+while wing flapping produces lower-frequency oscillations with characteristic asymmetric profiles (fast downstroke, slow upstroke).
+
+\section{Sim-to-Real Transfer}
+
+To bridge the domain gap between synthetic training data and real-world deployment, we employ several transfer learning strategies.
+
+\subsection{Domain Randomization}
+
+The synthetic data pipeline implements domain randomization to prevent overfitting to simulation artifacts:
+
+\begin{itemize}
+    \item \textbf{Atmospheric Variation:} Randomized fog density, haze levels, and lighting conditions spanning the operational envelope.
+    \item \textbf{Sensor Characteristics:} Variable noise profiles, exposure settings, and lens distortion parameters.
+    \item \textbf{Geometric Perturbation:} Camera pose errors within calibration uncertainty bounds, target trajectory variations, and scale randomization.
+\end{itemize}
+
+\subsection{Robustness Branch}
+
+The network architecture includes a secondary robustness objective that penalizes sensitivity to high-frequency image variations.
+This forces the encoder to focus on low-frequency structural and dynamic features (which transfer well between domains) rather than high-frequency texture details (which transfer poorly).
+
+\subsection{Rotation Augmentation}
+
+During training, consistent rotations are applied across all frames of each sequence to maintain temporal coherence while teaching rotation invariance.
+All Gaussian attributes are transformed appropriately: positions via matrix multiplication, covariances via similarity transformation,
+quaternions via composition, and spherical harmonics via Wigner D-matrix application, while opacity remains unchanged.
+
+\section{Implementation Strategy}
+
+\subsection{Hardware Platform}
+
+The system targets the NVIDIA Jetson AGX Orin (64GB) for edge deployment,
+balancing computational capability with power constraints suitable for remote installation.
+
+\subsection{Memory Management}
+
+The TBD voxel grid exploits sparsity through hash-map or sparse tensor implementations (Minkowski Engine), avoiding memory allocation for empty sky regions.
+Gaussian parameters are stored and processed in FP16 (half precision) to double throughput and halve memory bandwidth.
+
+\subsection{Camera Network}
+
+The cameras connect via Gigabit Ethernet to ensure raw uncompressed frames reach the processing unit with minimal latency jitter,
+essential for tight temporal synchronization within $\pm 10$ms tolerance.
+
+\subsection{Pipeline Latency}
+
+The complete pipeline targets \todo{sub-Xms} end-to-end latency from frame capture to classification output:
+\todo{TBD}
+% \begin{itemize}
+%     \item Frame acquisition and synchronization: 30ms
+%     \item TBD volumetric accumulation: 50ms
+%     \item DepthSplat reconstruction: 100ms per frame
+%     \item VN-Transformer spatial encoding: 50ms per frame
+%     \item Mamba4D temporal classification: 100ms for 30-frame sequence
+%     \item Classification head and output: 10ms
+% \end{itemize}
+
+\section{Conclusion}
+
+Developing a 3D occupancy and classification system for flying objects requires abandoning the appearance-based assumptions of conventional computer vision.
+In long-range airspace monitoring, appearance is unreliable, texture is absent, and signals are weak.
+
+This chapter has detailed a methodology that prioritizes geometry and dynamics over appearance.
+By moving detection to 3D space via volumetric accumulation, we recover signals likely missed by 2D detectors.
+By utilizing DepthSplat for feed-forward 3D Gaussian reconstruction, we achieve the speed and fidelity required for real-time operation in textureless environments.
+By constructing rotation-invariant features through Vector Neurons and VN-Transformer, we ensure classification robustness across arbitrary viewing angles.
+Finally, by modeling the 4D temporal evolution through Mamba4D state space models, we extract the subtle kinematic signatures that distinguish mechanical drones from biological birds with linear computational complexity.
+
+This synthesis of methods represents a theoretically grounded and practically deployable solution to the challenge of unauthorized UAV detection and classification.

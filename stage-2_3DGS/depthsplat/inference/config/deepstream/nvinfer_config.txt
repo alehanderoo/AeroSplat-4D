@@ -1,0 +1,28 @@
+[property]
+gpu-id=0
+net-scale-factor=0.003921569
+# The path to the model engine file will be set dynamically or points to the generated .plan file
+model-engine-file=../../models/depthsplat_fp16.plan
+# For DepthSplat, we might need a custom parser if we want to extract Gaussian parameters directly
+# In this phase, we use appsink to get the raw output tensors
+batch-size=1
+network-mode=1
+num-detected-classes=1
+interval=0
+gie-unique-id=1
+process-mode=1
+network-type=100 # Other/Custom
+# Input dimensions for DepthSplat
+# Assuming 5 cameras are batched into [1, 5, 3, 256, 256] 
+# However, nvinfer usually expects [B, C, H, W]. 
+# We may need a custom preprocessor to stack 5 images into the channel dimension 
+# or use a custom plugin. For now, we assume the model takes [5, 3, 256, 256]
+model-width=256
+model-height=256
+model-color-format=0 # RGB
+# Normalization: (x - mean) / std
+# For ImageNet: mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+# DeepStream uses: (x * net-scale-factor) - (offsets * net-scale-factor)
+# If net-scale-factor = 1/255 = 0.003921569
+# Then offsets = mean * 255
+offsets=123.675;116.28;103.53

@@ -1,0 +1,137 @@
+# Camera Intrinsics Database
+# All camera intrinsics configurations available for rendering
+# Referenced by camera_type in config.yaml
+
+# Real dataset (TUM RGB-D Freiburg 2, 640x480). Pinhole + radial-tangential (k1,k2,p1,p2,k3).
+simple_pinhole:
+  description: "TUM RGB-D Freiburg 2 RGB intrinsics (pinhole with 5-term radtan distortion). Good baseline for standard lenses."
+  pixel_size: 3.0
+  f_stop: 2.8
+  camera_matrix:
+    - [520.9, 0.0, 325.1]
+    - [0.0, 521.0, 249.7]
+    - [0.0, 0.0, 1.0]
+  distortion_model: "pinhole"
+  distortion_coefficients: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172]  # k1,k2,p1,p2,k3
+  original_resolution: [640, 480]
+  source: "https://cvg.cit.tum.de/data/datasets/rgbd-dataset/file_formats"
+
+# From Intel RealSense T265 example (ORB-SLAM3 config), Kannala-Brandt (KB4) fisheye model.
+kannala_brandt:
+  description: "RealSense T265-style fisheye (Kannala-Brandt 4-coefficient) intrinsics."
+  pixel_size: 3.0
+  f_stop: 2.0
+  camera_matrix:
+    - [286.6408996582031, 0.0, 429.8493957519531]
+    - [0.0, 286.5458068847656, 393.5089111328125]
+    - [0.0, 0.0, 1.0]
+  distortion_model: "kannala_brandt"
+  distortion_coefficients: [-0.011200119741261005, 0.05016331002116203, -0.04697997868061066, 0.0091929966583848]  # k1..k4
+  original_resolution: [848, 800]
+  source: "https://github.com/UZ-SLAMLab/ORB_SLAM3/issues/297"
+
+# Real dataset (TUM RGB-D Freiburg 3, 640x480). Zero-distortion pinhole model.
+no_distortion:
+  description: "TUM RGB-D Freiburg 3 RGB intrinsics (pinhole, zero distortion). Ideal when you want distortion-free projection."
+  pixel_size: 3.0
+  f_stop: 0.0  # disable depth of field
+  camera_matrix:
+    - [535.4, 0.0, 320.1]
+    - [0.0, 539.2, 247.6]
+    - [0.0, 0.0, 1.0]
+  distortion_model: "pinhole"
+  distortion_coefficients: [0.0, 0.0, 0.0, 0.0, 0.0]
+  original_resolution: [640, 480]
+  source: "https://cvg.cit.tum.de/data/datasets/rgbd-dataset/file_formats"
+
+# High-precision pinhole camera with full 8-coefficient distortion correction.
+advanced_pinhole:
+  description: "High-precision pinhole camera with full 8-coefficient distortion correction."
+  pixel_size: 3.0
+  f_stop: 1.8
+  camera_matrix:
+    - [958.8, 0.0, 960.0]
+    - [0.0, 956.7, 600.0]
+    - [0.0, 0.0, 1.0]
+  distortion_model: "pinhole"
+  distortion_coefficients: [0.14, -0.03, -0.0002, -0.00003, 0.009, 0.5, -0.07, 0.017]  # k1,k2,p1,p2,k3,k4,k5,k6
+
+# OpenCV fisheye (equidistant / KB4) style configuration.
+fisheye:
+  description: "OpenCV fisheye (equidistant / KB4) style configuration."
+  pixel_size: 3.0
+  f_stop: 2.0
+  camera_matrix:
+    - [455.8, 0.0, 960.0]
+    - [0.0, 454.7, 600.0]
+    - [0.0, 0.0, 1.0]
+  distortion_model: "fisheye"
+  distortion_coefficients: [0.05, 0.01, -0.003, -0.0005]
+
+# Smartphone example: iPhone X (video mode, 1920×1080) calibration
+iphone_x_video:
+  description: "iPhone X rear camera, video(1920×1080) calibration from user-reported values"
+  pixel_size: 3.0
+  f_stop: 1.8
+  camera_matrix:
+    - [1975.47873, 0.0, 1060.77279]
+    - [0.0, 2053.41424, 513.500761]
+    - [0.0, 0.0, 1.0]
+  distortion_model: "pinhole"
+  distortion_coefficients: [0.37367123, -1.29505304, -0.01482113, 0.01368264, 0.92461805]  # k1,k2,p1,p2,k3
+  original_resolution: [2560, 1440]
+  source: "https://stackoverflow.com/questions/50402026/what-is-the-intrinsicmatrix-for-an-iphone-x-rear-camera"
+
+# Traffic / surveillance style camera published in academic work
+traffic_cam_example:
+  description: "Traffic / street camera example calibration (from academic camera calibration literature)"
+  pixel_size: 3.0
+  f_stop: 2.8
+  camera_matrix:
+    - [2078.0, 0.0, 1024.0]
+    - [0.0, 2075.0, 768.0]
+    - [0.0, 0.0, 1.0]
+  distortion_model: "pinhole"
+  distortion_coefficients: [0.12, -0.09, 0.001, 0.0004, 0.0]
+  original_resolution: [2048, 1536]
+  source: "camera calibration literature (e.g. automatic traffic camera calibration papers)"
+
+# Generic IP surveillance camera 1080p (~2 MP) intrinsics
+ip_cam_generic_1080p:
+  description: "Typical IP surveillance camera 1080p (~2 MP) intrinsics as placeholder (mild distortion)"
+  pixel_size: 3.0
+  f_stop: 2.8
+  camera_matrix:
+    - [1500.0, 0.0, 960.0]
+    - [0.0, 1500.0, 540.0]
+    - [0.0, 0.0, 1.0]
+  distortion_model: "pinhole"
+  distortion_coefficients: [0.05, -0.02, 0.001, 0.0005, 0.0]
+  original_resolution: [1920, 1080]
+  source: "adapted from typical IP / CCTV lens calibration assumptions"
+
+ip_cam_2k:
+  description: "Ugreen matrix adapted camera 2K (~4 MP) intrinsics as placeholder (mild distortion)"
+  pixel_size: 3.0
+  f_stop: 0.0
+  camera_matrix:
+    - [1969.29389875117, 0, 816.454819988224]
+    - [0, 1923.98226987042, 522.277892545547]
+    - [0, 0, 1]
+  distortion_model: "pinhole"
+  distortion_coefficients: [0.05, -0.02, 0.001, 0.0005, 0.0]
+  original_resolution: [2560, 1440]
+  source: "adapted from Ugreen webcam + lens calibration assumptions"
+
+
+Ugreen_webcam:
+  description: "OpenCV camera intrinsics (opencv_brown_conrady)."
+  pixel_size: 3.0
+  f_stop: 2.8
+  camera_matrix:
+    - [1969.29389875117, 0, 816.454819988224]
+    - [0, 1923.98226987042, 522.277892545547]
+    - [0, 0, 1]
+  distortion_model: "opencv_brown_conrady"
+  distortion_coefficients: [0.477496537789747, -1.36670178942399, 0.000464826249385278, -0.0748383802080843, 1.05358227009319]
+  original_resolution: [2560, 1440]

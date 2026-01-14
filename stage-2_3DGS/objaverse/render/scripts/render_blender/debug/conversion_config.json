@@ -1,0 +1,18 @@
+{
+  "output_dir": "debug",
+  "train_split": 0.9,
+  "scenes_per_chunk": 2,
+  "image_size": [
+    256,
+    256
+  ],
+  "include_depth": true,
+  "include_mask": true,
+  "include_normal": true,
+  "num_views": 20,
+  "total_scenes": 5,
+  "train_scenes": 4,
+  "test_scenes": 1,
+  "train_failed": 0,
+  "test_failed": 0
+}

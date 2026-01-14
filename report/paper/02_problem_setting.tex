@@ -1,0 +1,230 @@
+
+
+\chapter{Problem Setting and Assumptions}
+\label{chap:problem_setting}
+
+This chapter formalizes the problem setting, hardware configuration, sensing assumptions, and evaluation criteria for our multi-camera flying object detection and tracking system. 
+Design constraints are explicitly stated to provide context for the architectural decisions made in subsequent chapters.
+
+\section{Scenario: Multi-Camera Airspace Monitoring}
+
+\subsection{Monitored Volume}
+We consider a ground-based surveillance system monitoring a central airspace volume $\mathcal{V} \subset \mathbb{R}^3$ defined in a world coordinate frame. The volume is specified by:
+\begin{itemize}
+  \item \textbf{Horizontal extent:} A polygonal or circular region (typically 25-50m radius)
+  \item \textbf{Vertical extent:} Ground level to maximum monitoring altitude (typically 25-50m)
+  \item \textbf{Volume shape:} Intersection of camera frustums defining the observable region
+\end{itemize}
+\
+Objects of interest (drones and birds) enter, traverse, and exit this volume. Our goal is to detect, reconstruct, classify, and track them \emph{while they are within} $\mathcal{V}$.
+
+
+\subsection{Multi-Camera Configuration}
+The system consists of $N \ge 5$ RGB cameras positioned on the ground with upward-looking orientations. See Figure~\ref{fig:occupancy_grid} for an illustrative setup.
+The cameras satisfy:
+\begin{itemize}
+  \item \textbf{Overlapping fields of view:} Each point in $\mathcal{V}$ should ideally be visible to at least 5 cameras to enable reliable 3D reconstruction
+  \item \textbf{Inward-looking configuration:} Cameras are arranged to point toward a common central region
+  \item \textbf{Fixed mounting:} Cameras are statically mounted (e.g., on poles, buildings, towers) with rigid mounts to minimize pose changes
+  \item \textbf{Temporal synchronization:} Cameras are time-synchronized via NTP to within $\pm 10$ ms
+  \item \textbf{Network connectivity:} All cameras are connected to a central processing unit (edge device) via a local network switch
+\end{itemize}
+
+This configuration is typical of fixed surveillance installations for perimeter security, airport monitoring, or protected area surveillance.
+
+
+\begin{figure}[h!]
+    \centering
+    \begin{subfigure}[b]{0.4\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{img/occupancy_grid_1.png}
+        \caption{Top view}
+        \label{fig:occupancy_grid_2}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.4\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{img/occupancy_grid_2.png}
+        \caption{Side view}
+        \label{fig:occupancy_grid_1}
+    \end{subfigure}
+    \caption{Occupancy grid representation of monitored volume $\mathcal{V}$. Cameras are positioned around the perimeter, looking upward into the volume where flying objects (red) are detected and tracked.}
+    \label{fig:occupancy_grid}
+\end{figure}
+
+\subsection{Flying Object Characteristics}
+We focus on two object categories:
+
+\begin{itemize}
+  \item \textbf{Drones (Quadcopters and Multicopters)} Physics-constrained motion with relatively smooth trajectories and hovering capability. Rigid and symmetric structures, with spinning rotors in high-resolution views.
+  \item \textbf{Birds} Flapping flight with gliding and more varied motion than drones. Deformable body with wing articulation and biological texture patterns.
+\end{itemize}
+
+\subsection{Scene Constraints}
+The monitoring scenario imposes several challenging constraints:
+
+\begin{itemize}
+  \item \textbf{Textureless background:} The primary background is open sky, which provides minimal texture features for traditional feature matching or depth estimation methods
+  \item \textbf{Distant small objects:} Flying objects operate within the central volume of overlapping views. With distances ranging from 10--100m (given a camera radius of 100m), targets occupy only a relatively small number of pixels in each camera frame
+  \item \textbf{Varying scales across views:} Objects may be significantly closer to some cameras than others, resulting in scale variation across views
+  \item \textbf{Environmental variations:} Lighting changes (sun position, clouds), weather conditions (haze, rain), and background clutter (clouds, buildings at horizon) affect appearance
+  \item \textbf{Occlusions:} Temporary occlusions may occur due to clouds, other flying objects, or camera-specific obstacles
+\end{itemize}
+
+These constraints guide our design choices, specifically the use of geometric constraints from multiple views and temporal dynamics rather than relying on features based on appearance alone.
+
+
+
+
+\subsection{Pixel Density and Resolution Limits}
+\label{subsec:pixel_density}
+
+A fundamental constraint in our long-range monitoring scenario is the low spatial resolution of distant targets. 
+Even with high-resolution 4K sensors, the large monitored volume results in insufficient pixel density for standard single-frame classification.
+
+\paragraph{Standardized Requirements and System Capabilities}
+The IEC 62676-4 standard \cite{IEC62676} defines image quality levels based on pixel density. 
+For reliable "Recognition" (distinguishing known individuals) or "Identification," the standard requires densities of 125 PPM (pixels per meter) and 250 PPM, respectively. 
+"Detection" requires only 25 PPM.
+
+In our setup, a 2K camera ($2560 \times 1440$) with a $90^\circ$ horizontal field of view yields a pixel density of approximately $PPM(d) \approx 1280/d$. At $d=100$m, 
+the density drops to $\approx 12.8$ PPM which is barely sufficient for monitoring traffic flow and well below the threshold for object recognition. 
+A 0.5m drone at this distance occupies only $\approx 6.4$ pixels, meaning high-frequency spatial details are lost to aliasing \cite{ShannonVision}.
+
+\paragraph{Theoretical Limits and Temporal Integration}
+Information theory formalizes this limitation. The capacity of the imaging channel is bounded by the spatial bandwidth (pixels on target) and 
+Signal-to-Noise Ratio (SNR) \cite{ShannonVision}. When a target spans fewer than $\approx 10-20$ pixels, 
+the spatial bandwidth is too low to encode unique class features, and noise further degrades the effective bit depth per pixel.
+
+However, the total information capacity can be recovered by integrating observations over time. 
+If the target is tracked over $T$ frames, the effective channel capacity scales with $T$, provided that motion or rotation reveals new information \cite{ma_remote_2023}. 
+This motivates our approach: we compensate for the lack of spatial bandwidth ($B_{spatial}$) by exploiting temporal bandwidth ($B_{temporal}$), 
+using motion dynamics and multi-view consistency to classify objects that are spatially irresolvable in any single frame.
+
+
+
+\section{Assumptions}
+
+\subsection{Camera Calibration}
+
+\paragraph{Intrinsic Parameters}
+We assume camera intrinsic matrices $\mathbf{K}_i$ (focal lengths, principal points, distortion) are known via standard offline calibration. 
+While environmental factors may cause slight drift, we treat these parameters as fixed for the primary workflow. %, with optional online refinement available if necessary.
+
+\paragraph{Extrinsic Parameters}
+We assume camera extrinsic matrices $[R_i|t_i]$ (rotation and translation from world to camera frame) are initialized via offline calibration methods, 
+such as static scene Structure-from-Motion (SfM) or manual alignment with ground control points.
+In security contexts (e.g., airports, perimeter monitoring), the camera positions $t_i$ are often known from installation blueprints or GPS, 
+but the orientations $R_i$ are prone to inaccuracy and drift. These parameters are also fixed for the primary workflow.
+
+\subsection{Temporal Synchronization}
+Cameras are assumed to be synchronized via NTP or PTP to within $\pm 10$ ms. 
+At typical object speeds (0--15 m/s), this results in an acceptable positional uncertainty of $\approx 15$ cm. 
+Residual synchronization errors are treated as time offsets.
+
+\subsection{Data Availability During Training vs. Inference}
+
+\paragraph{Training Phase (Synthetic Data from Isaac Sim)}
+During training on synthetic data, we have access to:
+\begin{itemize}
+  \item Synchronized RGB frames from all cameras
+  \item \textbf{Ground truth depth maps} for each camera
+  \item \textbf{Pixel-wise segmentation masks} indicating foreground objects
+  \item \textbf{3D object trajectories} (positions, orientations) in world frame
+  \item \textbf{Object class labels} (drone model, bird species)
+  \item Perfect camera intrinsics and extrinsics (no calibration error)
+\end{itemize}
+
+\paragraph{Inference Phase (Real-World Deployment)}
+During inference on real-world data, we have access to \textbf{only}:
+\begin{itemize}
+  \item Synchronized RGB frames from all cameras
+  \item Known camera intrinsics $\mathbf{K}_i$
+  \item Known camera extrinsics $[\mathbf{R}_i | \mathbf{t}_i]$
+\end{itemize}
+
+
+This sim-to-real transfer is a central challenge addressed in Chapter~\ref{chap:experiments}.
+
+\section{Edge Computing Goal}
+
+We target deployment on \textbf{NVIDIA Jetson} edge computing platforms:
+\begin{itemize}
+  \item Representative platform(s): 
+  \begin{itemize}
+    \item Jetson Orin Nano Super (8GB, 67 TOPS INT8, \$250)
+    \item Jetson AGX Orin (32GB, 275 TOPS INT8, \$2000)
+  \end{itemize}
+  \item 5 cameras $\times$ 2560$\times$1440 @ 30 FPS $\approx$ 165 megapixels/sec
+  \item Shared network bandwidth: 1 Gbps Ethernet switch
+  \item Target latency: $<$ \todo{1} second from frame capture to classification output
+\end{itemize}
+
+
+\section{Evaluation Criteria}
+
+We evaluate the system along multiple dimensions:
+
+\begin{table}[h]
+\centering
+\caption{Evaluation metrics categorized by system aspect.}
+\label{tab:evaluation_metrics}
+\begin{tabular}{llp{0.5\textwidth}}
+\toprule
+\textbf{Category} & \textbf{Metric} & \textbf{Description} \\
+\midrule
+\textbf{Classification} & Accuracy & Overall correct classification rate (drone vs. bird) \\
+ & Precision \& Recall & Per-class metrics to identify biases \\
+ & F1 Score & Harmonic mean of precision and recall \\
+ & Confusion Matrix & Detailed error analysis (false positives/negatives) \\
+\midrule
+\textbf{3D Reconstruction} & PSNR / SSIM & Novel view synthesis quality (3DGS evaluation) \\
+ & Temporal Consistency & Smoothness of object motion across frames \\
+\midrule
+\textbf{Tracking} & MOTA & Multi-Object Tracking Accuracy \\
+ & IDF1 & ID F1 score (track consistency) \\
+ & HOTA \cite{luiten_hota_2021} & Higher-Order Tracking Accuracy \\
+ & 3D Position Error & Euclidean distance to ground truth \\
+\midrule
+\textbf{Computational} & Latency & End-to-end processing time \\
+ & Throughput & Frames per second (FPS) on target hardware \\
+ & Memory Footprint & Peak GPU/CPU memory usage \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Success Criteria}
+
+We defined several success criteria for the proposed system:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Metric} & \textbf{Baseline} & \textbf{Target} \\
+\midrule
+Classification Accuracy (Synthetic) & \todo{85\%} & $>$ 95\% \\
+Classification Accuracy (Real-World) & \todo{70\%} & $>$ 85\% \\
+3D Position Error (RMSE) & \todo{$<$ 2.0m} & $<$ 0.5m \\
+Tracking IDF1 & \todo{60\%} & $>$ 80\% \\
+Inference Latency & \todo{$<$ 2s} & $<$ 500ms \\
+\bottomrule
+\end{tabular}
+\caption{Success criteria for system performance. Baselines represent typical performance of 2D-only or per-frame 3D methods from \todo{literature}; targets represent our goals for the proposed 4D temporal dynamics approach.}
+\label{tab:success_criteria}
+\end{table}
+\
+
+\section{Chapter Summary}
+
+This chapter discussed:
+\begin{itemize}
+  \item The multi-camera airspace monitoring scenario with central volume $\mathcal{V}$
+  \item Hardware configuration: $N \geq 3$ upward-looking synchronized RGB cameras
+  \item Object characteristics: small distant drones and birds against sky backgrounds
+  \item Sensing assumptions: known intrinsics and extrinsics %(approximately known, refinable) 
+  \item Data availability: rich synthetic training data vs. RGB-only real-world inference
+  \item Edge computing target: NVIDIA Jetson platform, latency requirements
+  \item Evaluation criteria: classification, reconstruction, tracking, computational metrics
+\end{itemize}
+

@@ -1,0 +1,26 @@
+# Prometheus Configuration for DepthSplat Monitoring
+#
+# This configuration scrapes metrics from the inference pipeline.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # DepthSplat Inference Pipeline
+  - job_name: 'depthsplat'
+    static_configs:
+      - targets: ['inference:9090']
+        labels:
+          service: 'inference'
+    
+    # Relabel to add instance label
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'depthsplat-inference'
+
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

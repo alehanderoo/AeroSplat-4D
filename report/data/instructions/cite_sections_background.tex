@@ -1,0 +1,439 @@
+I'm writing my master thesis described in <introduction_problem_setting> and <background_related_work> below.
+
+These are the instructions for writing the content in the middle.
+<instructions>
+# Instructions for Expanding Background Bulletpoints from Provided Papers
+
+## Task Overview
+You are given a section from a background chapter with high-level concept bulletpoints, along with the Introduction and Problem Setting of the thesis for context. You are also provided with the text content of several academic papers (PDFs). Your task is to expand each bulletpoint by extracting concise sentences from the **provided papers** that relate to the concept. If multiple provided papers share similar findings or concepts, merge them into a single sentence with multiple citations.
+
+## Input Format
+You will receive:
+- **Thesis Context**: The Introduction and Problem Setting chapters of the thesis.
+- **Target Section**: A section heading and multiple bulletpoints describing high-level concepts to be expanded.
+- **Source Papers**: The text content of several academic papers.
+
+## Output Format Requirements
+
+### Expanded LaTeX Content
+For each bulletpoint, structure your output as follows:
+
+```latex
+\subsection{[Original Bulletpoint Concept]}
+\begin{itemize}
+    \item [High-level concept statement from original bulletpoint]
+    \begin{itemize}
+        \item \cite{AuthorYear} [ONE sentence extracted from this paper that relates to the concept in the context of the provided thesis background]
+        \item \cite{AuthorYear1, AuthorYear2} [ONE merged sentence covering overlapping concepts from multiple papers]
+    \end{itemize}
+\end{itemize}
+```
+
+### Extraction Guidelines
+- **Source Material**: Only use the papers provided in the prompt. Do not search for external papers.
+- **Contextual Relevance**: Use the provided "Introduction" and "Problem Setting" to determine which statements in the papers are most relevant to the thesis theme (e.g., multi-camera drone/bird detection, 3D reconstruction).
+- **Citation Format**: Use the citation key provided with the paper text, or generate a standard `AuthorYear` key based on the paper's metadata.
+- **Conciseness**: Sentences should be concise (max 25 words) and self-contained.
+- **Synthesis**: Merge overlapping self-contained sentences into one statement with multiple citations.
+
+## Quality Criteria
+1. **Relevance**: Extracted statements must be directly relevant to the specific bulletpoint concept and the thesis context.
+2. **Accuracy**: Extracted sentences must accurately represent the paper's contribution.
+3. **Clarity**: Sentences should be understandable without reading the full paper.
+
+## Example
+
+**Input Bulletpoint:**
+"Motion-based detection cues (optical flow, frame differencing) and their utility for detecting small moving objects that lack appearance details."
+
+**Expected Output:**
+
+```latex
+\item Motion-based detection cues (optical flow, frame differencing) and their utility for detecting small moving objects that lack appearance details.
+\begin{itemize}
+    \item \cite{zhao2023} Optical flow estimation enables detection of UAVs by capturing motion signatures even when visual features are insufficient due to distance.
+    \item \cite{liu2022, chen2024} Frame differencing and temporal consistency checks effectively segment small aerial objects against complex sky backgrounds, improving robustness in surveillance scenarios.
+\end{itemize}
+```
+
+</instructions>
+
+<introduction_problem_setting>
+Given a network of $N \geq 3$ fixed RGB cameras with overlapping fields of view monitoring a central airspace volume, we address the following problem:
+
+\begin{quote}
+\emph{How can we detect, reconstruct, classify, and track flying objects (specifically drones and birds) in 3D space using only synchronized RGB camera feeds, while leveraging the temporal dynamics of 3D Gaussian representations to improve classification beyond what is achievable with per-frame 2D or static 3D approaches?}
+\end{quote}
+
+The system must operate under realistic constraints:
+\begin{itemize}
+  \item \textbf{Input:} Synchronized RGB frames from multiple cameras with known (but potentially imperfect) intrinsics and extrinsics
+  \item \textbf{Output:} 3D occupancy predictions, object classifications (drone vs. bird vs. background), and temporally consistent object tracks
+  \item \textbf{Constraints:} Real-time or near-real-time processing (potentially on edge computing hardware e.g., NVIDIA Jetson)
+  \item \textbf{Challenges:} Distant objects with low pixel resolution, textureless sky backgrounds, varying object scales across cameras, and camera calibration drift
+\end{itemize}
+
+This thesis investigates the following research questions:
+
+\begin{enumerate}
+  \item \textbf{RQ1: Foreground Segmentation}\\
+  How can we effectively segment dynamic flying objects in 3D space without knowledge of their appearance accross multiple views and time?
+
+  \item \textbf{RQ2: 3D Reconstruction from Sparse Multi-View RGB}\\
+  How can feed-forward Gaussian splatting methods be adapted to reconstruct small, distant flying objects from sparse multi-camera views against textureless sky backgrounds?
+
+  \item \textbf{RQ3: Temporal Dynamics for Classification}\\
+  Can temporal changes in 4D Gaussian parameters (position, scale, rotation, opacity) provide discriminative features for classification that improve upon static 3D or 2D appearance-based methods?
+
+  \item \textbf{RQ4: End-to-End System Performance}\\
+  What classification accuracy and tracking performance can be achieved with the proposed pipeline on both synthetic (Isaac Sim) and real-world datasets, and how does this compare to baseline 2D and 3D approaches?
+\end{enumerate}
+
+
+\section{Key Contributions}
+
+This thesis makes the following contributions:
+
+\begin{enumerate}
+  \item \textbf{Novel 4D Classification Architecture:} A ViT-based classifier that operates directly on temporal sequences of 3D Gaussian representations, exploiting the combination of static and temporal dynamics of Gaussian parameters for improved classification of dunamic flying objects.
+
+  \item \textbf{Multi-View Foreground Segmentation:} A ray-marching-based volumetric voting approach for dynamic object segmentation that accumulates evidence across views and time, enabling detection of small, low-contrast, fast flying objects.
+  
+  \item \textbf{Real-Time Pipeline: } An end-to-end system integrating synthetic data generation, multi-view track-before-detect, feed-forward 3D reconstruction, 4D classification, optimized for real-time or near-real-time operation.
+  
+  \item \textbf{Synthetic Data Generation Pipeline:} A comprehensive framework for generating realistic synthetic datasets in Isaac Sim, including diverse flying object models, camera effects, and environmental conditions, along with ground truth annotations for training and evaluation.
+
+  \item \textbf{Open-Source Implementation:} A complete implementation of the pipeline, with synthetic data generation tools for Isaac Sim.
+\end{enumerate}
+
+</introduction_problem_setting>
+
+
+<background_related_work>
+
+\chapter{\label{cha:background}Background and Related Work}
+
+This chapter provides a review of prior work relevant to our proposed pipeline.
+The tracking of aerial objects such as drones and birds in surveillance scenarios presents unique challenges compared to traditional ground-based tracking applications. 
+Unlike typical object tracking where targets occupy significant pixel regions and move against textured backgrounds, aerial surveillance must contend with small, distant objects moving against textureless sky backgrounds with high-frequency motion patterns. 
+This section establishes the foundational challenges and approaches that motivate the subsequent design rationale of our method in section~\ref{cha:design_rationale}.
+
+\begin{enumerate}
+    \item \textbf{Localization via Multi-camera Segmentation:} 
+    Processing the entire high-resolution airspace is computationally intractable and prone to false positives. We first review methods for \textit{Multi-camera Foreground Segmentation}, discussing how multi-view geometry and Track-Before-Detect (TBD) strategies can robustly isolate small targets from the dominant sky background and suppress phantom detections.
+    
+    \item \textbf{Real-time Representation via 3D Gaussian Splatting:} 
+    Once a target is localized, classifying it requires a detailed spatial model. However, traditional reconstruction methods are often too slow for real-time surveillance. We therefore examine \textit{Feed Forward 3D Gaussian Reconstruction}, motivating the shift from per-scene optimization to generalizable, feed-forward models that can instantly predict explicit 3D structures from sparse camera views.
+    
+    \item \textbf{Identification via 4D Dynamics:} 
+    Finally, static shape is often insufficient to distinguish between morphologically similar targets (e.g., a gliding bird vs. a fixed-wing drone). We explore \textit{4D Temporal Dynamics Classification}, detailing how sequences of 3D Gaussian tokens can be analyzed to classify targets based on their temporal evolution and motion signatures (e.g., flapping vs. rigid motion).
+\end{enumerate}
+
+
+\section{Multi-camera Foreground segmentation}
+
+Reconstructing the full volume $\mathcal{V}$ is both computationally prohibitive and redundant, as flying objects typically occupy only a fraction of the scene. 
+Consequently, it is essential to first isolate potential foreground regions through multi-camera segmentation. 
+This section surveys existing techniques for detecting and segmenting flying objects within multi-camera configurations, with a particular emphasis on the difficulties associated with small targets in dynamic environments.
+
+\subsection{Multi-Camera Object Detection and Tracking Systems}
+
+\paragraph{Inward-Looking Multi-Camera Systems:}
+\begin{itemize}
+    \item CityFlow and pedestrian tracking datasets /cite{chavdarova_wildtrack_2018} establish BEV projection as standard for ground-plane multi-camera fusion.
+    \item MVDeTr uses deformable attention to aggregate multi-view features for pedestrian detection in overlapping camera setups.
+    \item MMPTRACK demonstrates end-to-end trainable multi-camera tracking with explicit occlusion reasoning across views.
+    \item \cite{rajic_multi-view_2025} MITtrack
+\end{itemize}
+
+\paragraph{Autonomous Driving Perception (Outward-Looking):}
+\begin{itemize}
+    \item DETR3D /cite{wang_detr3d_2022} lifts 2D image features to 3D object queries using camera geometry without explicit depth estimation.
+    \item BEVFormer constructs bird's-eye-view representations from multi-camera inputs via spatial cross-attention mechanisms.
+    \item OccFormer and VoxFormer predict dense 3D occupancy grids for autonomous driving scene understanding.
+    \item FB-OCC introduces forward-backward view transformation for efficient occupancy prediction from surround cameras.
+\end{itemize}
+
+\paragraph{Gap Statement:}
+\begin{itemize}
+    \item Existing multi-camera systems target large objects (cars, pedestrians) with substantial pixel coverage, not small distant aerial targets.
+\end{itemize}
+
+
+\subsection{Detection Paradigms: Detect-Before-Track vs. Track-Before-Detect}
+
+\paragraph{Detect-Before-Track (DBT):}
+\begin{itemize}
+    \item DBT pipelines apply per-frame detection followed by data association, assuming reliable single-frame detections.
+    \item Deep learning detectors (YOLO, Faster R-CNN) require minimum pixel sizes, failing on sub-10-pixel aerial targets.
+    \item Detection confidence thresholds in DBT discard weak signals that could accumulate into reliable tracks over time.
+\end{itemize}
+
+\paragraph{Track-Before-Detect (TBD):}
+\begin{itemize}
+    \item TBD delays detection decisions by integrating measurements across time, improving detection of low-SNR targets.
+    \item Particle filter TBD maintains hypothesis distributions over target state, accumulating likelihood over observation sequences.
+    \item Dynamic programming TBD searches for optimal paths through measurement space, avoiding premature thresholding.
+    \item Multi-frame integration in TBD enables detection of targets with peak SNR below single-frame detection thresholds.
+\end{itemize}
+
+\paragraph{Multi-View TBD:}
+\begin{itemize}
+    \item Volumetric TBD extends temporal integration to spatial domain, accumulating evidence across synchronized camera views.
+    \item Cross-view consistency constraints in multi-camera TBD suppress phantom detections caused by single-view noise.
+\end{itemize}
+
+
+
+
+
+\subsection{Background Modeling and Motion Detection}
+
+\paragraph{Adaptive Background Subtraction:}
+\begin{itemize}
+    \item Gaussian Mixture Models (GMM/MOG2) adapt per-pixel background distributions to gradual illumination changes.
+    \item ViBe uses pixel-level sample consensus for robust background modeling with random update strategy.
+    \item Background subtraction struggles with dynamic outdoor scenes containing moving clouds, swaying trees, and shadows.
+\end{itemize}
+
+\paragraph{Motion-Based Detection Cues:}
+\begin{itemize}
+    \item Optical flow (Lucas-Kanade, Farneback) detects motion vectors but requires sufficient texture for reliable estimation.
+    \item Frame differencing captures temporal changes but cannot distinguish object motion from camera motion or noise.
+    \item Motion cues complement appearance when objects lack distinctive features against uniform sky backgrounds.
+\end{itemize}
+
+\subsection{Volumetric Fusion and Ray-Marching}
+
+\paragraph{Geometric Fusion Strategies:}
+\begin{itemize}
+    \item Early fusion projects 2D features into shared 3D space before detection, preserving geometric relationships.
+    \item Late fusion performs independent 2D detections then triangulates, risking inconsistent multi-view associations.
+    \item Hybrid approaches combine 2D processing efficiency with 3D geometric reasoning for balanced performance.
+\end{itemize}
+
+\paragraph{Volumetric Representations:}
+\begin{itemize}
+    \item Voxel grids discretize 3D space for accumulating multi-view evidence but scale cubically with resolution.
+    \item Occupancy probability maps use Bayesian updates to fuse observations from multiple viewpoints over time.
+    \item Space carving removes voxels inconsistent with silhouette observations, isolating foreground object volumes.
+\end{itemize}
+
+\paragraph{Ray-Marching Techniques:}
+\begin{itemize}
+    \item Ray-marching traverses 3D space along camera rays, efficiently sampling only potentially occupied regions.
+    \item Multi-view ray consistency identifies voxels observed as foreground across sufficient camera viewpoints.
+    \item Temporal ray accumulation integrates evidence along rays over frames, enabling detection of intermittent signals.
+\end{itemize}
+
+
+
+
+\section{Feed-Forward 3D Gaussian Reconstruction}
+
+\subsection{Traditional 3D Reconstruction}
+
+\paragraph{Multi-View Stereo and Structure from Motion:}
+\begin{itemize}
+    \item Structure from Motion (COLMAP) jointly estimates camera poses and sparse point clouds from image correspondences.
+    \item Multi-View Stereo densifies sparse SfM points using photometric consistency across calibrated viewpoints.
+    \item Bundle adjustment refines camera parameters and 3D structure by minimizing reprojection error globally.
+    \item Traditional MVS requires textured surfaces and fails on uniform regions like sky or specular materials. 
+    It is also an iterative process which is not real-time.
+\end{itemize}
+
+\paragraph{Point-Based Rendering:}
+\begin{itemize}
+    \item Point-based rendering (surfels) represents surfaces as oriented discs, avoiding mesh topology constraints.
+    \item Differentiable point rendering enables gradient-based optimization of point cloud geometry and appearance.
+    \item Point primitives lack continuous surface definition, causing rendering holes at oblique viewing angles.
+\end{itemize}
+
+
+\subsection{Neural Radiance Fields}
+
+\paragraph{NeRF Fundamentals:}
+\begin{itemize}
+    \item Neural Radiance Fields (NeRF) encode scenes as MLPs mapping 3D position and view direction to color and density.
+    \item Volume rendering integrates radiance along rays, enabling photorealistic novel view synthesis from posed images.
+    \item NeRF requires dense input views (50-100+) and hours of per-scene optimization, limiting practical deployment.
+\end{itemize}
+
+\paragraph{Sparse-View NeRF Variants:}
+\begin{itemize}
+    \item RegNeRF adds depth smoothness regularization to prevent overfitting when training views are sparse.
+    \item PixelNeRF conditions radiance prediction on image features, enabling generalization across scenes.
+    \item Sparse-view neural rendering remains computationally expensive for real-time surveillance applications.
+\end{itemize}
+
+
+
+
+\subsection{3D Gaussian Splatting Fundamentals}
+
+\paragraph{Representation:}
+\begin{itemize}
+    \item 3D Gaussian Splatting (3DGS) represents scenes as explicit anisotropic Gaussian primitives with learnable parameters.
+    \item Each Gaussian encodes position (mean), covariance (scale/rotation), opacity, and view-dependent color (spherical harmonics).
+    \item Explicit Gaussian primitives enable direct manipulation, editing, and efficient rasterization-based rendering.
+\end{itemize}
+
+\paragraph{Rendering Pipeline:}
+\begin{itemize}
+    \item Gaussian splatting projects 3D Gaussians to 2D screen space via differentiable tile-based rasterization.
+    \item Alpha blending composites overlapping Gaussian contributions in depth order for final pixel colors.
+    \item Splatting achieves real-time rendering (100+ FPS) while maintaining quality competitive with neural methods.
+\end{itemize}
+
+\paragraph{Optimization Process:}
+\begin{itemize}
+    \item Standard 3DGS optimizes Gaussian parameters via gradient descent on photometric loss from known viewpoints.
+    \item Adaptive density control splits, clones, and prunes Gaussians based on gradient magnitude and opacity.
+    \item Per-scene optimization requires minutes to hours, precluding direct application for real-time reconstruction.
+\end{itemize}
+
+
+
+
+\subsection{Sparse-View Gaussian Reconstruction Challenges}
+
+\paragraph{Overfitting and Artifacts:}
+\begin{itemize}
+    \item Few-view optimization causes Gaussians to overfit training views, producing artifacts from novel viewpoints.
+    \item Sparse supervision leads to geometric ambiguity, particularly in textureless regions like sky backgrounds.
+    \item Standard densification heuristics fail with limited views, producing either sparse or bloated Gaussian distributions.
+\end{itemize}
+
+\paragraph{Regularization Approaches:}
+\begin{itemize}
+    \item Depth supervision from monocular estimators constrains Gaussian positions to plausible scene geometry.
+    \item FSGS uses proximity-based Gaussian unpooling to regularize density in poorly observed regions.
+    \item DNGaussian distills geometric priors from pre-trained depth networks to guide sparse-view optimization.
+\end{itemize}
+
+\subsection{Feed-Forward Gaussian Prediction}
+
+\paragraph{Generalizable Architectures:}
+\begin{itemize}
+    \item Feed-forward models replace per-scene optimization with learned mappings from images to Gaussian parameters.
+    \item Pixel-aligned prediction generates Gaussians per input pixel, preserving spatial correspondence with image features.
+    \item Large-scale training on diverse scenes enables instant inference without test-time optimization.
+\end{itemize}
+
+\paragraph{Key Methods:}
+\begin{itemize}
+    \item pixelSplat predicts per-pixel Gaussian parameters from stereo image pairs using epipolar feature sampling.
+    \item MVSplat constructs multi-view cost volumes for depth estimation, then lifts pixels to 3D Gaussians.
+    \item Splatter Image generates 3D Gaussians from single images using learned monocular geometry priors.
+    \item GPS-Gaussian uses Gaussian parameter maps aligned to image planes for efficient multi-view prediction.
+\end{itemize}
+
+\paragraph{Cost Volume Methods:}
+\begin{itemize}
+    \item Plane-sweep cost volumes aggregate multi-view photometric similarity across depth hypotheses.
+    \item Cost volume depth estimation provides explicit geometry guidance for Gaussian placement in 3D space.
+    \item MVSplat demonstrates that cost volume depth outperforms monocular priors for multi-view reconstruction.
+\end{itemize}
+
+\section{4D Temporal Dynamics Classification}
+
+\subsection{Deep Learning on Point Sets and Gaussian Primitives}
+
+\paragraph{Point Cloud Processing:}
+\begin{itemize}
+    \item PointNet processes unordered point sets using shared MLPs and symmetric aggregation for permutation invariance.
+    \item PointNet++ introduces hierarchical grouping and local feature learning for capturing fine geometric details.
+    \item Point Transformer applies self-attention to point clouds, modeling long-range dependencies in 3D structure.
+\end{itemize}
+
+\paragraph{Gaussian-Specific Representations:}
+\begin{itemize}
+    \item Gaussian primitives extend points with covariance, opacity, and color, requiring adapted network architectures.
+    \item Gaussian parameters can be processed as augmented point features or through specialized covariance-aware layers.
+    \item SE(3)-equivariant networks ensure consistent predictions regardless of object orientation in 3D space.
+\end{itemize}
+
+\subsection{Tokenization of 3D Gaussian Representations}
+
+\paragraph{3D Gaussian Splatting for Object Classification}
+
+\begin{itemize}
+    \item 3D Gaussian splatting representations as input features for neural network-based classification systems.
+    \begin{itemize}
+        \item \cite{zhang2025mitigating} Gaussian splatting point clouds with scale, rotation, and opacity parameters effectively characterize surface geometry and material properties for classification.
+        \item \cite{xin2025learning} Embedding representations of 3DGS based on continuous submanifold fields encapsulate intrinsic Gaussian primitive information for neural network learning.
+        \item \cite{yan2025gaussian} Gaussian splatting serves as surface representation for multi-view 3D object detection through feature descriptors on partial surfaces.
+    \end{itemize}
+\end{itemize}
+
+\paragraph{Gaussian Aggregation:}
+\begin{itemize}
+    \item Fixed-cardinality sampling (FPS, random) converts variable Gaussian counts to fixed-size network inputs.
+    \item Voxel-based pooling aggregates Gaussians within spatial cells, preserving local density information.
+    \item Learned set aggregation (attention pooling) dynamically weights Gaussian contributions to global representations.
+\end{itemize}
+
+\paragraph{Feature Extraction:}
+\begin{itemize}
+    \item Position, scale, and rotation encode geometric structure; opacity and color encode appearance and visibility.
+    \item Covariance eigenvalues characterize local shape anisotropy (flat, elongated, spherical primitives).
+    \item Spherical harmonic coefficients capture view-dependent color variations for material understanding.
+\end{itemize}
+
+\paragraph{Handling Set Structure:}
+\begin{itemize}
+    \item DeepSets and Transformers naturally handle permutation-invariant inputs through symmetric architectures.
+    \item Positional encoding for Gaussians based on spatial location enables attention-based feature aggregation.
+    \item Cross-attention between Gaussian tokens and learned class queries enables discriminative feature extraction.
+\end{itemize}
+
+
+\subsection{Temporal Sequence Modeling}
+
+\paragraph{Sequence Architectures:}
+\begin{itemize}
+    \item RNNs and LSTMs model sequential dependencies but struggle with long-range temporal relationships.
+    \item Temporal Transformers apply self-attention across frames, capturing both short and long-term dynamics.
+    \item Mamba and state-space models offer linear-complexity alternatives for efficient long-sequence processing.
+\end{itemize}
+
+\paragraph{Spatio-Temporal Representation:}
+\begin{itemize}
+    \item 4D data can be modeled as 3D snapshots in sequence or as persistent entities with temporal trajectories.
+    \item Factorized attention separates spatial (within-frame) and temporal (across-frame) attention for efficiency.
+    \item Object-centric representations track Gaussian correspondences across time for coherent motion modeling.
+\end{itemize}
+
+\paragraph{Motion Feature Extraction:}
+\begin{itemize}
+    \item Gaussian position derivatives encode velocity and acceleration of local 3D structure over time.
+    \item Scale and rotation changes capture non-rigid deformation like wing flapping or rotor spin.
+    \item Opacity fluctuations indicate motion blur, occlusion changes, or structural reconfiguration.
+\end{itemize}
+
+
+\subsection{Classification of Dynamic Flying Objects}
+
+\paragraph{Discriminative Motion Signatures:}
+\begin{itemize}
+    \item Drones exhibit rigid body motion with high-frequency vibrations from spinning rotors (50-200 Hz mechanically).
+    \item Birds display periodic wing flapping with characteristic frequency ranges (1-20 Hz depending on species/size).
+    \item Fixed-wing aircraft and gliding birds show smooth trajectories without high-frequency structural motion.
+\end{itemize}
+
+\paragraph{Feature Integration:}
+\begin{itemize}
+    \item Multi-modal fusion combines static shape features with temporal motion features for robust classification.
+    \item Attention-based fusion learns to weight spatial vs. temporal cues based on input characteristics.
+    \item Contrastive learning can separate drone and bird embeddings in joint spatio-temporal feature space.
+\end{itemize}
+
+\paragraph{Challenges:}
+\begin{itemize}
+    \item Distant objects produce few Gaussians with high uncertainty, reducing discriminative motion signal quality.
+    \item Occlusions and partial views cause temporal discontinuities in reconstructed Gaussian sequences.
+    \item Class imbalance and intra-class variation (many drone/bird types) require robust training strategies.
+\end{itemize}
+
+
+</background_related_work>

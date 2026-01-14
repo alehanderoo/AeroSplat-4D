@@ -1,0 +1,273 @@
+\chapter{\label{chap:experiments}Experiments and Evaluation}
+
+% This chapter describes the experimental setup, datasets, metrics, and results used to evaluate the pipeline. We organize experiments by question type: \emph{Validate} (does it function?), \emph{Investigate} (what properties emerge?), and \emph{Compare} (how does it rank?). All experiments are designed to validate our \textbf{main claim}: \emph{4D Gaussian splat reconstruction of dynamic parts improves classification of flying objects in the sky.}
+
+% \section{Experimental Setup}
+
+% \subsection{Camera Rig Configuration}
+% All experiments use a \textbf{circular camera rig} with cameras floor-mounted and looking upward at the sky:
+% \begin{itemize}
+%   \item \textbf{Default configuration:} 7 RGB cameras evenly spaced on a circle
+%   \item \textbf{Variants:} 5 and 9 cameras obtained by removing or adding evenly spaced cameras on the same circle
+%   \item \textbf{Geometry:} Mix of inner/outer radii fixed per scene to ensure overlapping fields of view
+%   \item \textbf{Frame rate:} \(\geq\)90 fps to capture rotor and wingbeat signatures
+% \end{itemize}
+
+% \subsection{Dataset (IsaacSim Synthetic)}
+% We use a single synthetic environment in IsaacSim with the following controlled factors:
+% \begin{itemize}
+%   \item \textbf{Lighting:} Day lighting conditions
+%   \item \textbf{Classes:} 2 classes (drone, bird)
+%   \item \textbf{Speed variants:} slow and fast (2 levels)
+%   \item \textbf{Altitude variants:} low and high (2 levels)
+%   \item \textbf{Scenarios:} 4 combinations total \(\{\text{drone}, \text{bird}\} \times \{\text{slow}, \text{fast}\}\)
+%   \item \textbf{Clips:} \(\geq\)15 clips per scenario, each 6--8 seconds
+%   \item \textbf{Ground truth:} Full annotations including class labels, rotor RPM, wingbeat frequency (Hz), 3D tracks, and camera poses
+%   \item \textbf{Data splits:} Train/validation/test = 60/20/20
+%   \item \textbf{Training setup:} Train on 7-camera configuration; test includes 5, 7, and 9 cameras for robustness evaluation
+% \end{itemize}
+
+% \subsection{Pipeline Default Configuration}
+% Unless explicitly varied in an experiment, we use the following baseline:
+% \begin{itemize}
+%   \item \textbf{Representation:} 3D-4DGS (hybrid 3D--4D Gaussian Splatting with automatic downgrading of static regions)
+%   \item \textbf{Classifier:} Rotor-Splat two-stream (Model A) with SE(3)-equivariant static stream and spectral dynamic stream
+%   \item \textbf{Backbone:} Point Transformer v3 (PTv3) with Temporal Mamba
+%   \item \textbf{DINO integration:} Frozen-distill mode (DINOv3 frozen, distillation to token space)
+%   \item \textbf{Token budget:} \(K=2000\) tokens per frame
+%   \item \textbf{Temporal window:} 16 frames (tube length)
+%   \item \textbf{Stride:} 2 frames
+%   \item \textbf{Serialization:} Hilbert curve ordering
+%   \item \textbf{Occupancy resolution:} \(128^3\) voxel grid
+% \end{itemize}
+
+% \subsection{Implementation Details and Compute}
+% \begin{itemize}
+%     \item \textbf{Optimization:} 
+%   \begin{itemize}
+%     \item AdamW with cosine learning rate decay, initial learning rate \(10^{-4}\), label smoothing \(0.1\), batch size 16 sequences.
+%     \item Muon optimizer \url{https://docs.pytorch.org/docs/2.9/generated/torch.optim.Muon.html}
+%   \end{itemize}
+%   \item \textbf{Augmentation:} Random token drop (biased to low-\(\alpha\)), jitter in position/scales/rotation, time-warp
+%   \item \textbf{Loss weights:} Cross-entropy (class), DINO distillation, cross-view/time InfoNCE, temporal smoothness, auxiliary spectral losses
+%   \item \textbf{Compute:} Training on a RTX 5090 GPU; inference at \(\sim\)10--20 fps on single GPU depending on sequence length and backbone
+%   \item \textbf{Statistical testing:} 3 random seeds per configuration; paired bootstrap confidence intervals (95\%)
+% \end{itemize}
+
+% \subsection{Metrics}
+% \begin{itemize}
+%   \item \textbf{Classification:} Accuracy, Precision, Recall, F1-score; confusion matrices
+%   \item \textbf{Spectral accuracy:} Dominant frequency (\(\omega\)) Mean Absolute Error (MAE) in Hz for rotor/wingbeat predictions
+%   \item \textbf{Computational efficiency:} Latency P95 (ms), frames per second (fps), GPU memory (VRAM in GB)
+%   \item \textbf{Storage:} Model size and reconstruction storage (MB on disk)
+%   \item \textbf{Reconstruction quality:} PSNR and SSIM on held-out views (where applicable)
+% \end{itemize}
+
+% \section{Validate: Core Functionality and Main Claims}
+% These experiments verify that core components operate correctly and validate the central hypothesis that 4D reconstruction improves classification.
+
+% \subsection{Exp-V1: Does 4D Reconstruction Improve Classification?}
+% \textbf{Question:} Does 4D Gaussian Splatting reconstruction of dynamic parts improve classification accuracy compared to 2D and static 3D baselines?
+
+% \noindent\textbf{Method:} Compare three approaches on the 7-camera configuration:
+% \begin{enumerate}
+%   \item \textbf{Multi-view 2D:} Per-camera DINOv3 features with late fusion classifier (no 3D reconstruction)
+%   \item \textbf{Static 3D:} 3D Gaussian Splatting (3DGS) without temporal parameters; tokens processed by static stream only
+%   \item \textbf{Dynamic 4D (ours):} 3D-4DGS with hybrid representation; tokens processed by two-stream Rotor-Splat (static + spectral)
+% \end{enumerate}
+
+% \noindent\textbf{Metrics:} Accuracy, Precision, Recall, F1-score; confusion matrices; \(\omega\)-MAE (for approach 3); latency P95, fps.
+
+% \noindent\textbf{Success criterion:} Approach (3) achieves statistically significant F1 improvement over (2), which in turn outperforms (1). Expected ordering: \textbf{3 > 2 > 1} with \(p < 0.05\).
+
+% \noindent\textbf{Results:} [Placeholder: Table-V1 showing Acc/Prec/Rec/F1, \(\omega\)-MAE, fps for all three approaches; Figure-Q1 showing confusion matrices highlighting drone/bird discrimination improvements.]
+
+% \subsection{Exp-V2: Camera Count Robustness}
+% \textbf{Question:} Does the 4D reconstruction advantage persist when fewer or more cameras are available?
+
+% \noindent\textbf{Method:} Evaluate the Dynamic 4D system (approach 3 from Exp-V1) on three camera configurations:
+% \begin{itemize}
+%   \item \textbf{5 cameras:} Reduced coverage
+%   \item \textbf{7 cameras:} Default configuration
+%   \item \textbf{9 cameras:} Enhanced coverage
+% \end{itemize}
+% All other parameters remain fixed at pipeline defaults.
+
+% \noindent\textbf{Metrics:} F1-score vs. camera count; \(\omega\)-MAE; latency scaling (P95 ms).
+
+% \noindent\textbf{Success criterion:} F1 increases monotonically with camera count; 4D advantage (vs. static 3D baseline) persists even at 5 cameras with \(>5\%\) relative F1 gain.
+
+% \noindent\textbf{Results:} [Placeholder: Table-V2 showing F1 and fps for 5/7/9 cameras; plot showing F1 vs. \#cameras with error bars.]
+
+% \subsection{Exp-V3: 4DGS vs. 3D-4DGS Efficiency}
+% \textbf{Question:} Does the hybrid 3D-4DGS representation (automatic downgrading of static regions) maintain classification accuracy while reducing computational and storage costs?
+
+% \noindent\textbf{Method:} Compare on 7-camera configuration:
+% \begin{itemize}
+%   \item \textbf{Full 4DGS:} All Gaussians have temporal parameters (no downgrading)
+%   \item \textbf{Hybrid 3D-4DGS (ours):} Automatic downgrading of static regions to 3D
+% \end{itemize}
+
+% \noindent\textbf{Metrics:} F1-score, \(\omega\)-MAE; training time (hours), inference time (ms), fps; GPU memory (GB), storage on disk (MB); PSNR/SSIM on held-out views.
+
+% \noindent\textbf{Success criterion:} 3D-4DGS achieves \(\leq 1\%\) F1 drop compared to full 4DGS while delivering \(\geq 2\times\) speedup in training/inference \emph{or} \(\geq 40\%\) storage reduction.
+
+% \noindent\textbf{Results:} [Placeholder: Table showing side-by-side comparison of 4DGS vs. 3D-4DGS on all metrics; highlight efficiency gains with minimal accuracy cost.]
+
+% \section{Investigate: Understanding What Works and When}
+% These experiments explore model behaviors, sensitivities, and emergent properties to understand the mechanisms behind performance gains.
+
+% \subsection{Exp-I1: Spectral Head ON/OFF}
+% \textbf{Question:} Are the spectral motion features (rotor/wingbeat frequencies, phases, axes) the primary driver of improved drone vs. bird discrimination?
+
+% \noindent\textbf{Method:} Ablate the spectral stream on 7-camera configuration:
+% \begin{itemize}
+%   \item \textbf{Spectral OFF:} Use only SE(3)-equivariant static stream (geometry + photometry)
+%   \item \textbf{Spectral ON (ours):} Full two-stream Rotor-Splat with spectral features
+% \end{itemize}
+
+% \noindent\textbf{Metrics:} F1-score overall and per-class; confusion matrices (especially drone/bird errors); \(\omega\)-MAE; latency delta (ms).
+
+% \noindent\textbf{Success criterion:} Spectral ON shows measurable F1 improvement (+3--5\%) with acceptable latency increase (\(<20\%\)).
+
+% \noindent\textbf{Results:} [Placeholder: Table showing F1 and confusion matrices for both settings; highlight reduction in drone/bird misclassifications; Figure-Q2 showing example spectral signatures for drone vs. bird.]
+
+% \subsection{Exp-I2: Token Budget K}
+% \textbf{Question:} What is the sweet spot for the number of tokens per frame balancing accuracy and throughput?
+
+% \noindent\textbf{Method:} Vary token budget \(K\) on 7-camera configuration:
+% \begin{itemize}
+%   \item \(K = 1000\) (low)
+%   \item \(K = 2000\) (default)
+%   \item \(K = 4000\) (high)
+% \end{itemize}
+
+% \noindent\textbf{Metrics:} F1-score, inference fps, GPU memory (VRAM in GB).
+
+% \noindent\textbf{Success criterion:} Identify the \(K\) value that maximizes F1 within acceptable real-time constraints (target \(\geq 10\) fps); adopt this as the default for subsequent experiments.
+
+% \noindent\textbf{Results:} [Placeholder: Table showing F1, fps, and VRAM for each \(K\); plot showing accuracy-speed trade-off curve with recommended operating point.]
+
+% \subsection{Exp-I3: Temporal Window Length for Spectral Features}
+% \textbf{Question:} How does the length of the temporal window (tube length) affect spectral feature quality and classification accuracy?
+
+% \noindent\textbf{Method:} Vary temporal window on 7-camera configuration:
+% \begin{itemize}
+%   \item \textbf{0.25 s} (\(\sim\)23 frames at 90 fps)
+%   \item \textbf{0.5 s} (\(\sim\)45 frames)
+%   \item \textbf{1.0 s} (\(\sim\)90 frames)
+% \end{itemize}
+
+% \noindent\textbf{Metrics:} \(\omega\)-MAE (Hz), F1-score, latency P95 (ms).
+
+% \noindent\textbf{Success criterion:} Identify minimal window length that achieves target \(\omega\)-MAE (\(\leq 3\)--5 Hz) with low latency; balance spectral resolution against real-time constraints.
+
+% \noindent\textbf{Results:} [Placeholder: Plot showing \(\omega\)-MAE and F1 vs. window length; table with latency measurements; identify optimal window for thesis default.]
+
+% \section{Compare: Alternatives and Design Choices}
+% These experiments compare our approach to alternative architectures and design choices at matched computational budgets.
+
+% \subsection{Exp-C1: Backbone Comparison (A vs. D)}
+% \textbf{Question:} How does the full Rotor-Splat+Mamba architecture (Model A) compare to a lightweight baseline in terms of accuracy, latency, and energy efficiency?
+
+% \noindent\textbf{Method:} Compare two backbones on 7-camera configuration:
+% \begin{itemize}
+%   \item \textbf{Model A (ours):} Rotor-Splat two-stream with PTv3 and Temporal Mamba
+%   \item \textbf{Model D (Lightweight):} PointNeXt/PointNet++ per-frame with 1D-conv/GRU temporal aggregation
+% \end{itemize}
+% Adjust layer counts to match FLOPs within 10\% where feasible.
+
+% \noindent\textbf{Metrics:} F1-score, \(\omega\)-MAE, latency P95 (ms), inference energy (J per frame if measurable).
+
+% \noindent\textbf{Outcome:} Demonstrate accuracy-efficiency trade-off; justify Model A for accuracy-critical applications or Model D for edge deployment.
+
+% \noindent\textbf{Results:} [Placeholder: Table showing F1, \(\omega\)-MAE, latency, and energy for both models; discuss use cases for each.]
+
+% \subsection{Exp-C2: DINO Semantics Utility}
+% \textbf{Question:} Do the lifted DINOv3 semantic features provide measurable classification improvements, especially in low-texture sky regions?
+
+% \noindent\textbf{Method:} Ablate DINO integration on 7-camera configuration:
+% \begin{itemize}
+%   \item \textbf{DINO OFF:} No DINO distillation; tokens use only geometric and photometric features
+%   \item \textbf{DINO Frozen-Distill (ours):} Frozen DINOv3 with distillation to token space
+% \end{itemize}
+
+% \noindent\textbf{Metrics:} F1-score overall and on low-texture subsets; latency overhead (ms).
+
+% \noindent\textbf{Success criterion:} DINO provides measurable F1 improvement (\(>2\%\)) on challenging low-texture cases with acceptable latency cost.
+
+% \noindent\textbf{Results:} [Placeholder: Table showing F1 with/without DINO overall and on low-texture subset; latency comparison.]
+
+% \subsection{Exp-C3: Sim-to-Real Transfer (Optional)}
+% \textbf{Question:} Does pretraining on IsaacSim synthetic data enable effective transfer to real-world captures with limited labeled data?
+
+% \noindent\textbf{Method:} Compare two training strategies on a small real-world test set (10--20 minutes of capture):
+% \begin{itemize}
+%   \item \textbf{Train from scratch:} Train only on available real data
+%   \item \textbf{Pretrain + finetune:} Pretrain on IsaacSim, finetune on 5\%, 10\%, or 20\% of real data
+% \end{itemize}
+
+% \noindent\textbf{Metrics:} F1-score and \(\omega\)-MAE on real test set; sample-efficiency curve.
+
+% \noindent\textbf{Outcome:} Demonstrate that synthetic pretraining reduces real-data requirements; quantify sample efficiency gains.
+
+% \noindent\textbf{Results:} [Placeholder: Plot showing F1 vs. percentage of real training data for both strategies; table with final metrics.]
+
+% \section{Real-Time Performance Analysis}
+% Two focused measurements to characterize real-time system performance:
+
+% \subsection{RT-1: CUDA Rasterizer Performance}
+% \textbf{Question:} What is the speedup from using a fused CUDA kernel for Gaussian Splatting rasterization compared to CPU baseline?
+
+% \noindent\textbf{Method:} Measure rendering time per frame on 7-camera configuration:
+% \begin{itemize}
+%   \item \textbf{CPU baseline:} Standard splatting implementation
+%   \item \textbf{CUDA kernel:} Fused rasterizer with hardware acceleration
+% \end{itemize}
+
+% \noindent\textbf{Metrics:} Rendering time (ms/frame), fps, PSNR parity check (ensure numerical equivalence).
+
+% \noindent\textbf{Results:} [Placeholder: Table showing CPU vs. CUDA render times and fps; verify PSNR match.]
+
+% \subsection{RT-2: End-to-End Latency Breakdown}
+% \textbf{Question:} What are the per-stage latencies in the full pipeline, and where are the bottlenecks?
+
+% \noindent\textbf{Method:} Profile the complete pipeline on 5, 7, and 9 camera configurations with simple stream overlap:
+% \begin{itemize}
+%   \item \textbf{Stage 1:} Feature extraction (DINOv3)
+%   \item \textbf{Stage 2:} GS reconstruction and rendering
+%   \item \textbf{Stage 3:} Tokenization
+%   \item \textbf{Stage 4:} Classification (Rotor-Splat)
+%   \item \textbf{Stage 5:} 3D occupancy and tracking
+% \end{itemize}
+
+% \noindent\textbf{Metrics:} P95 latency (ms) per stage and end-to-end; identify bottlenecks.
+
+% \noindent\textbf{Results:} [Placeholder: Figure-RT showing stacked bar chart of latency breakdown for 5/7/9 cameras; table with detailed per-stage timings.]
+
+% \section{Summary Tables and Figures}
+% The following tables and figures synthesize experimental results:
+
+% \begin{itemize}
+%   \item \textbf{Table-V1:} 2D vs. Static 3D vs. Dynamic 4D comparison (Acc/Prec/Rec/F1, \(\omega\)-MAE, fps)
+%   \item \textbf{Table-V2:} Camera count (5/7/9) vs. F1 and fps
+%   \item \textbf{Table-I1:} Spectral stream ON/OFF ablation
+%   \item \textbf{Table-I2:} Token budget \(K\) trade-off (1k/2k/4k)
+%   \item \textbf{Table-C1:} Backbone A vs. D at matched FLOPs
+%   \item \textbf{Figure-Q1:} Confusion matrices (2D vs. 3D-4DGS) highlighting drone/bird discrimination
+%   \item \textbf{Figure-Q2:} Example spectral signatures (\(\omega\) spectra) for drone vs. bird
+%   \item \textbf{Figure-RT:} End-to-end latency breakdown (5/7/9 cameras)
+% \end{itemize}
+
+% \section{Success Criteria for Main Claim}
+% To validate the central thesis contribution, the following criteria must be met:
+
+% \begin{enumerate}
+%   \item \textbf{Main claim (Exp-V1):} 3D-4DGS yields a statistically significant F1 improvement over both 2D multi-view and static 3D baselines on 7-camera configuration (\(p < 0.05\), expected \(\Delta F1 > 5\%\)).
+%   \item \textbf{Robustness (Exp-V2):} The 4D advantage persists at 5 cameras with measurable F1 gain (\(>5\%\) relative improvement over static 3D).
+%   \item \textbf{Mechanism (Exp-I1):} Spectral stream demonstrably reduces drone/bird confusion rates; \(\omega\)-MAE within \(\leq 3\)--5 Hz at 90 fps.
+%   \item \textbf{Engineering (Exp-V3):} Hybrid 3D-4DGS offers \(\geq 2\times\) training/inference speedup or \(\geq 40\%\) storage reduction compared to full 4DGS with \(\leq 1\%\) F1 loss.
+% \end{enumerate}
+
+% Meeting these criteria establishes that 4D Gaussian Splatting reconstruction of dynamic regions is both effective (classification improvement) and efficient (computational savings) for flying object classification in multi-view RGB systems.
+

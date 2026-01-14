@@ -1,0 +1,142 @@
+# DepthSplat Inference Pipeline - Docker Compose
+#
+# Orchestrates multiple containers for the complete inference system.
+#
+# Usage:
+#   # Development mode (with simulator)
+#   docker compose --profile dev up
+#
+#   # Production mode
+#   docker compose up inference
+#
+#   # With monitoring
+#   docker compose --profile monitoring up
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # RTSP Stream Simulator (Development Only)
+  # ==========================================================================
+  rtsp-simulator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.simulator
+    container_name: depthsplat-simulator
+    volumes:
+      - ${RENDER_DIR:-/home/sandro/thesis/renders/5cams_08-01-26_drone_50m}:/renders:ro
+    ports:
+      - "8554:8554"
+    environment:
+      - FPS=${FPS:-30}
+    networks:
+      - depthsplat
+    profiles:
+      - dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8554"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ==========================================================================
+  # Inference Pipeline
+  # ==========================================================================
+  inference:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: depthsplat-inference
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${GPU_ID:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - CUDA_VISIBLE_DEVICES=${GPU_ID:-0}
+      - DEPTHSPLAT_MODE=${MODE:-prod}
+    volumes:
+      # Model files (read-only)
+      - ../models:/app/models:ro
+      # Configuration
+      - ../config:/app/config:ro
+      # Output directory (read-write)
+      - ${OUTPUT_DIR:-../output}:/app/output
+      # Logs
+      - ${LOG_DIR:-../logs}:/app/logs
+    ports:
+      - "9090:9090"  # Prometheus metrics
+    networks:
+      - depthsplat
+    depends_on:
+      rtsp-simulator:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+    command: ["--config", "config/pipeline_config.yaml", "--mode", "${MODE:-prod}"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ==========================================================================
+  # Prometheus (Monitoring Profile)
+  # ==========================================================================
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: depthsplat-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9091:9090"
+    networks:
+      - depthsplat
+    profiles:
+      - monitoring
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  # ==========================================================================
+  # Grafana (Monitoring Profile)
+  # ==========================================================================
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: depthsplat-grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - depthsplat
+    profiles:
+      - monitoring
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+# ==========================================================================
+# Networks
+# ==========================================================================
+networks:
+  depthsplat:
+    driver: bridge
+
+# ==========================================================================
+# Volumes
+# ==========================================================================
+volumes:
+  prometheus_data:
+  grafana_data:

@@ -1,0 +1,154 @@
+# @package _global_
+# Objaverse object-centric 3D Gaussian Splatting experiment - WHITE BACKGROUND
+#
+# Based on literature analysis (LGM, GRM, TriplaneGaussian, etc.), white backgrounds
+# combined with full-image losses (no foreground masking) is the standard approach
+# for object-centric reconstruction on Objaverse.
+#
+# Key differences from black background config:
+# - White background [1,1,1] instead of black
+# - MSE/LPIPS computed on FULL images (no foreground masking)
+# - Direct alpha supervision via LossMask (replaces indirect silhouette loss)
+
+defaults:
+  - override /dataset: objaverse # Uses Objaverse-specific dataset loader
+  - override /model/encoder: depthsplat # Uses standard DepthSplat encoder
+  - override /loss: [mse, lpips, depth, mask] # Full-image RGB + direct alpha supervision (replaces silhouette)
+
+wandb:
+  name: objaverse_white_bg_118k # Display name in Weights & Biases
+  tags: [objaverse, object_centric, white_background, vits] # Filtering tags for W&B
+
+# Data loading
+data_loader:
+  train:
+    batch_size: 1 # Images per batch during training
+    num_workers: 8 # CPU threads for data loading
+  test:
+    batch_size: 1 # Process one scene at a time
+  val:
+    batch_size: 1 # Process one scene at a time
+
+# Training
+trainer:
+  max_steps: 200000 # Total training iterations
+  num_nodes: 1 # Number of GPU nodes
+
+# Optimizer - higher LR for training from scratch
+optimizer:
+  lr: 1.5e-4 # Global learning rate
+  lr_monodepth: 1.e-5  # Lower LR for pretrained Depth Anything V2 to preserve weights
+  warm_up_steps: 2000 # Linear warmup steps for stability
+  weight_decay: 0.01 # L2 regularization factor
+
+# Model configuration
+model:
+  encoder:
+    # Depth estimation
+    num_depth_candidates: 64 # Number of depth planes for initial cost volume
+
+    # Cost volume
+    costvolume_unet_feat_dim: 64 # Feature channels in cost volume UNet
+    costvolume_unet_channel_mult: [1, 1, 1] # Channel multipliers per level
+    costvolume_unet_attn_res: [4] # Resolution to apply attention
+
+    # Gaussians
+    gaussians_per_pixel: 1 # Number of Gaussian primitives per pixel
+
+    # Depth head
+    depth_unet_feat_dim: 32 # Feature channels for depth head
+    depth_unet_attn_res: [16] # Attention resolution for depth head
+    depth_unet_channel_mult: [1, 1, 1, 1, 1] # Channel multipliers
+
+    # Gaussian adapter - smaller scales for objects (GRM uses 0.001-0.01)
+    gaussian_adapter:
+      gaussian_scale_min: 0.001 # Minimum scale for Gaussians
+      gaussian_scale_max: 0.01 # Reduced from 0.1 to prevent large floaters
+      sh_degree: 2 # Spherical harmonics degree for color
+
+    # Use ViT-Small for Depth Anything V2
+    monodepth_vit_type: vits # Backbone type for Depth Anything V2
+
+    # Multi-view matching
+    local_mv_match: 5 # Number of adjacent views for feature matching (increased for better coverage)
+
+
+# Loss weights - WHITE BACKGROUND APPROACH
+# Key insight: With white backgrounds, full-image loss prevents "cheat to uniform color"
+# because object pixels have diverse colors that contrast with white background
+# Literature consensus: full-image RGB loss + separate direct alpha supervision
+loss:
+  mse:
+    weight: 1.0 # Pixel Reconstruction Error
+    use_foreground_mask: false # CRITICAL: Full image loss for white backgrounds
+  lpips:
+    apply_after_step: 0 # Start applying perceptual loss immediately
+    weight: 0.05 # Weight for LPIPS perceptual loss
+    use_foreground_mask: false # CRITICAL: Full image loss for white backgrounds
+  depth:
+    weight: 0.5 # Weight for depth supervision using GT Blender depth
+    min_depth: 0.1 # Minimum valid depth (matches dataset.near)
+    max_depth: 3.0 # Maximum valid depth (matches dataset.far)
+    background_weight: 0.1 # Push background depth to far plane
+  mask:
+    weight: 0.1 # Direct alpha supervision (LGM/GRM approach)
+    use_bce: false # MSE is standard approach
+
+# Dataset configuration
+dataset:
+  image_shape: [256, 256] # Training image resolution
+  # roots: [/home/sandro/.objaverse/depthsplat/] # Path to WHITE background dataset
+  roots: [/mnt/raid0/objaverse] # Path to WHITE background dataset
+  background_color: [1.0, 1.0, 1.0] # WHITE background
+
+  # Object-centric depth bounds (data-driven, from scripts/compute_depth_bounds.py)
+  near: 0.1 # Near plane 
+  far: 3.0 # Far plane 
+
+  # Enable masks and depth for supervision
+  use_masks: true # Load ground truth masks
+  use_depth: true # Load ground truth depth
+
+  # View sampling
+  view_sampler:
+    name: object_centric # Sampling strategy
+    num_context_views: 5 # Number of input views
+    num_target_views: 2 # Number of novel views to predict (loss calculation)
+    sampling_strategy: farthest_point # or "random", "uniform" Sample views to maximize coverage
+
+  # Training
+  augment: true # Enable random horizontal flips (images & poses)
+  train_times_per_scene: 1 # Epochs per scene per load
+  cameras_are_circular: true # Normalize assuming circular camera path
+
+# Checkpointing - only load Depth Anything V2, train rest from scratch
+checkpointing:
+  every_n_train_steps: 50000 # Save checkpoint frequency
+  save_top_k: 3 # Keep top 3 best checkpoints
+  pretrained_monodepth: pretrained/depth_anything_v2_vits.pth # Pretrained backbone path
+  pretrained_model: null # Train scratch
+  pretrained_mvdepth: null # Train scratch
+  pretrained_depth: null # Train scratch
+  no_strict_load: false # Enforce strict state dict matching
+  resume: false # Do not resume from previous run
+
+# Training settings
+train:
+  l1_loss: false # Use L2 (MSE) instead of L1
+  intermediate_loss_weight: 0.9 # Weight for intermediate supervision
+  print_log_every_n_steps: 100 # Logging frequency
+  eval_model_every_n_val: 2 # Validation frequency
+  train_ignore_large_loss: 0.0 # Threshold to ignore gradients (0 = off)
+  forward_depth_only: false # Full forward pass
+  no_viz_video: true # Disable video rendering (wandb compatibility issue)
+
+# Testing
+test:
+  eval_time_skip_steps: 5 # Skip steps during timing eval
+  compute_scores: true # Calculate PSNR/SSIM/LPIPS
+  save_image: true # Don't save output images
+  save_depth: false # Don't save depth maps
+  save_gaussian: false # Don't save point clouds
+
+# Output
+output_dir: outputs/objaverse_white # Directory for logs and checkpoints

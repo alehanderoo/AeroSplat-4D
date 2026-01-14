@@ -1,0 +1,130 @@
+\chapter{Introduction}
+\label{chap:introduction}
+
+\section{Motivation and Context}
+
+The rapid increase in small unmanned aerial vehicles (UAVs) and the growing need to monitor airspace have created big challenges for security systems. 
+It is critical to distinguish between authorized drones, unauthorized drones, and natural flying objects like birds. 
+This is required for many applications, such as airport security, protecting vital infrastructure, and monitoring wildlife.
+
+Standard methods for detecting and tracking aerial objects rely on special hardware like RADAR systems, RF receivers, or directional microphones.
+Although these solutions can be effective, they are either expensive or have limitations in range, accuracy, or susceptibility to interference.
+
+We therefore explore a different approach in this thesis. 
+We use multiple RGB cameras located on the ground with overlapping fields of view to predict 3D occupancy, classify objects, and track them. 
+By using the geometric information from multiple views and the changes in 3D reconstructions over time, we aim to create a system that runs on standard hardware while achieving high accuracy.
+
+The combination of 3D Gaussian splatting and classification over time for flying objects is a new area of research. 
+Gaussian splatting has changed real time 3D rendering, and its 4D extensions capture dynamic scenes effectively. 
+However, no existing work applies these features over time to classify objects.
+
+The Drone vs Bird Detection Challenge serves as the primary benchmark for this field. 
+Our research aims to surpass the current best known scores from this challenge by introducing multiple camera configurations and 3D reconstruction techniques to enhance classification accuracy. 
+Through these improvements we hope to steer the challenge towards a multiple view approach.
+
+\section{Problem Statement}
+
+Given a network of $N \geq 5$ fixed RGB cameras with overlapping fields of view monitoring a central airspace volume, we address the following problem:
+
+\begin{quote}
+\emph{How can we detect, reconstruct, classify, and track flying objects (specifically drones and birds) in 3D space using only synchronized RGB camera feeds, while leveraging the temporal dynamics of 3D Gaussian representations to improve classification beyond what is achievable with per-frame 2D or static 3D approaches?}
+\end{quote}
+
+The system must operate under realistic constraints:
+\begin{itemize}
+  \item \textbf{Input:} Synchronized RGB frames from multiple cameras with known (but potentially imperfect) intrinsics and extrinsics
+  \item \textbf{Output:} 3D occupancy predictions, object classifications (drone vs. bird vs. background), and temporally consistent object tracks
+  \item \textbf{Constraints:} Real-time or near-real-time processing (potentially on edge computing hardware e.g., NVIDIA Jetson)
+  \item \textbf{Challenges:} Distant objects with low pixel resolution, textureless sky backgrounds, varying object scales across cameras, and camera calibration drift
+\end{itemize}
+
+\section{Research Questions}
+
+This thesis investigates the following research questions:
+
+\begin{enumerate}
+  \item \textbf{RQ1: Foreground Segmentation}\\
+  How can we effectively segment dynamic flying objects in 3D space without knowledge of their appearance across multiple views and time?
+
+  \item \textbf{RQ2: 3D Reconstruction from Sparse Multi-View RGB}\\
+  How can feed-forward Gaussian splatting methods be adapted to reconstruct small, distant flying objects from sparse multi-camera views against textureless sky backgrounds?
+
+  \item \textbf{RQ3: Temporal Dynamics for Classification}\\
+  Can temporal changes in 4D Gaussian parameters (position, scale, rotation, opacity) provide discriminative features for classification that improve upon static 3D or 2D appearance-based methods?
+
+  \item \textbf{RQ4: End-to-End System Performance}\\
+  What classification accuracy and tracking performance can be achieved with the pipeline on both synthetic (Isaac Sim) and real-world datasets, and how does this compare to baseline 2D and 3D approaches?
+\end{enumerate}
+
+\section{Approach}
+
+Our approach integrates multiple components into an end-to-end pipeline:
+
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.95\textwidth]{img/simple-pipeline.png}
+  \caption{Overview of the proposed multi-camera 4D classification pipeline for flying object detection and tracking.}
+  \label{fig:simple-pipeline}
+\end{figure}
+
+We generate synthetic training data using NVIDIA Isaac Sim to simulate 3D objects like drones and birds in various scenes. 
+This includes realistic camera effects and changing environmental conditions, along with ground truth annotations. 
+For segmentation, we use a multi camera foreground segmentation technique. 
+Instead of detecting objects in each camera separately, we use a track before detect strategy. 
+This method identifies 3D regions visible in at least three cameras using ray marching and accumulates pixel differences over time to capture dynamic objects.
+
+We then apply feed forward Gaussian splatting to quickly reconstruct 3D Gaussian representations from multi view RGB frames. 
+A \todo{classifier architecture} based classifier processes these sequences to analyze 4D temporal dynamics. 
+It extracts features from changes in Gaussian parameters and uses rotation invariant architectures to classify objects as drones, birds, or unknown based on their motion.
+
+\section{Key Contributions}
+
+This thesis makes the following contributions:
+
+\begin{enumerate}
+  \item \textbf{Novel 4D Classification Architecture:} A \todo{classifier architecture} classifier that operates directly on temporal sequences of 3D Gaussian representations, exploiting the combination of static and temporal dynamics of Gaussian parameters for improved classification of dynamic flying objects.
+
+  \item \textbf{Multi-View Foreground Segmentation:} A ray-marching-based volumetric voting approach for dynamic object segmentation that accumulates evidence across views and time, enabling detection of small, low-contrast, fast flying objects.
+  
+  \item \textbf{Real-Time Pipeline:} An end-to-end system integrating synthetic data generation, multi-view track-before-detect, feed-forward 3D reconstruction, 4D classification, optimized for real-time or near-real-time operation.
+  
+  \item \textbf{Synthetic Data Generation Pipeline:} A comprehensive framework for generating realistic synthetic datasets in Isaac Sim, including diverse flying object models, camera effects, and environmental conditions, along with ground truth annotations for training and evaluation.
+
+  \item \textbf{Open-Source Implementation:} A complete implementation of the pipeline, with synthetic data generation tools for Isaac Sim.
+\end{enumerate}
+
+\section{Thesis Scope and Limitations}
+
+\subsection{In Scope}
+\begin{itemize}
+  \item Detection, 3D reconstruction, classification, and tracking of flying objects
+  \item Classification: drone vs. bird (with potential extension to unknown class)
+  \item Scenarios with $N \geq 5$ cameras with overlapping fields of view
+  \item Objects flying through a monitored central volume
+  \item Both synthetic (Isaac Sim) and real-world evaluation
+\end{itemize}
+
+\subsection{Out of Scope}
+\begin{itemize}
+  \item Fine-grained drone model recognition or bird species classification
+  \item Long-range tracking beyond the monitored volume
+  \item Adversarial scenarios (e.g., drones designed to evade detection)
+  \item Privacy and legal aspects of surveillance systems
+  \item Real-time guarantees with formal verification
+\end{itemize}
+
+\section{Document Structure}
+
+The remainder of this thesis is organized as follows:
+
+\begin{itemize}
+  \item \textbf{Chapter~\ref{chap:problem_setting}} defines the problem setting and assumptions in detail, formalizing the multi-camera monitoring scenario, sensing constraints, and evaluation criteria.
+  \item \textbf{Chapter~\ref{chap:background}} provides essential background for the three main pillars to contextualize our approach. 
+  \item \textbf{Chapter~\ref{chap:related_work}} presents a detailed review of related work, organized by technical component.
+  \item \textbf{Chapter~\ref{chap:method}} describes the complete pipeline in detail, explicitly justifying each major design choice based on the comparative analysis from Chapter~\ref{chap:background}.
+  \item \textbf{Chapter~\ref{chap:experiments}} presents our experimental methodology, datasets, evaluation metrics, baseline comparisons, and ablation studies addressing each research question.
+  \item \textbf{Chapter~\ref{chap:discussion}} discusses findings, limitations, failure cases, computational performance, and ethical considerations.
+  \item \textbf{Chapter~\ref{chap:conclusion}} concludes with a summary of contributions and directions for future work.
+\end{itemize}
+

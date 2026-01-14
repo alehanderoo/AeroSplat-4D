@@ -1,0 +1,429 @@
+\chapter{Feed-Forward 3D Gaussian Splatting Architecture Selection}
+\label{appendix:feedforward-3dgs}
+
+This appendix analyzes feed forward 3D Gaussian Splatting (3DGS) architectures to determine the optimal approach for our multi camera flying object reconstruction pipeline.
+The primary objective is improving classification accuracy through high quality 3D reconstructions that faithfully represent observed geometry.
+We intend to retrain a feed forward model on curated Objaverse objects with domain specific fine tuning on drone and bird assets.
+
+\section{Design Principles}
+
+Before evaluating architectures, we establish two guiding principles for architecture selection.
+
+\subsection{The Importance of Depth Supervision}
+
+Feed forward 3DGS models predict Gaussian parameters (position, scale, rotation, opacity, color) directly from image features.
+The quality of these predictions depends critically on how well the model learns geometric relationships during training.
+
+\textbf{Depth as geometric anchor.}
+Gaussian position $\mu \in \mathbb{R}^3$ requires accurate depth estimation to place primitives correctly in 3D space.
+Without explicit depth supervision, models must learn depth implicitly from photometric reconstruction loss alone.
+This indirect signal proves insufficient for accurate geometry, particularly in textureless regions where photometric gradients vanish.
+
+\textbf{Training stability.}
+Depth supervision provides dense per pixel gradients that stabilize training.
+Models trained with depth loss converge faster and generalize better to novel scenes.
+DepthSplat demonstrates that combining monocular depth priors (Depth Anything V2) with multi view cost volumes yields 1.08 dB PSNR improvement over geometry only approaches.
+
+\textbf{Cross dataset transfer.}
+For retraining on custom datasets (Objaverse + drone/bird assets), depth supervision enables learning transferable geometric representations.
+Models trained with depth annotations on synthetic data transfer more reliably to real imagery than those trained purely on photometric loss.
+
+\subsection{Rejection of Diffusion Based Reconstruction}
+
+Several recent methods employ diffusion models for 3D reconstruction, including Zero123, One2345, and diffusion enhanced Gaussian splatting variants.
+We explicitly exclude these architectures from consideration.
+
+\textbf{Hallucination risk.}
+Diffusion models generate plausible completions for unobserved regions by sampling from learned distributions.
+For novel view synthesis, this produces visually appealing results.
+For classification, hallucinated geometry introduces features that do not exist in the input observations.
+
+\textbf{Classification pipeline integrity.}
+Our pipeline classifies objects based on reconstructed Gaussian features.
+If the reconstruction model hallucinates drone like geometry for an ambiguous input, the classifier receives fabricated evidence.
+Conversely, if a novel drone design was absent from diffusion training, the model may generate incorrect geometry, causing misclassification.
+
+\textbf{Principle.}
+We require reconstruction methods that represent \emph{only what is observable} in the camera feeds.
+Uncertainty should propagate as uncertainty (e.g., low opacity, high variance), not as hallucinated structure.
+This rules out any architecture where a generative prior fills in unobserved regions.
+
+\section{Architecture Taxonomy}
+
+Feed forward 3DGS methods bypass per scene optimization by directly predicting Gaussian parameters from input images.
+We categorize these into four architecture families.
+
+\subsection{Pixel Aligned Architectures}
+
+Pixel aligned methods treat each source pixel as a potential 3D Gaussian, predicting per pixel attributes before unprojection.
+
+\subsubsection{Probabilistic Depth Methods}
+
+\textbf{pixelSplat}~\cite{charatan_pixelsplat_2024} (CVPR 2024 Best Paper Honorable Mention) introduced generalizable Gaussian splatting for image pairs.
+The method predicts Gaussian primitives through probabilistic depth estimation along epipolar lines.
+For each pixel, depth values are sampled via triangulation, and cross attention with frequency encoded positional embeddings identifies correspondences.
+Rather than predicting single depth values, pixelSplat outputs discrete probability distributions over depth buckets, using a reparameterization trick where Gaussian opacity equals bucket probability.
+The probabilistic formulation handles depth ambiguity gracefully but produces floating artifacts in textureless regions where all depth hypotheses appear equally valid.
+
+\textbf{Splatter Image}~\cite{szymanowicz_splatter_2024} reconstructs 3D Gaussians from single views at 38 FPS via image to image translation.
+The method uses purely 2D convolutional operators to predict one Gaussian per pixel.
+Single view operation necessarily relies on learned priors for depth and unobserved geometry, limiting applicability to our multi view setup.
+
+\subsubsection{Cost Volume Methods}
+
+\textbf{MVSplat}~\cite{chen_mvsplat_2025} replaces probabilistic depth with explicit cost volume representations.
+Plane sweeping constructs a 3D volume where each voxel stores cross view feature similarity at that depth hypothesis.
+Geometry emerges where feature variance across views is minimized.
+MVSplat achieves 26.39 PSNR on RealEstate10K with 12M parameters (10$\times$ fewer than pixelSplat) at 22 FPS.
+The geometric inductive bias improves cross dataset generalization but requires sufficient texture for feature matching.
+
+\textbf{GPS Gaussian}~\cite{zheng_gps-gaussian_2024} introduces iterative disparity estimation inspired by RAFT Stereo with 3D correlation volumes.
+Critically, it estimates depth for both source views to enable symmetric Gaussian representation.
+This eliminates floating artifacts from asymmetric depth uncertainty.
+
+\textbf{DepthSplat}~\cite{Xu_2025_depthsplat} (CVPR 2025) demonstrates bidirectional synergy between depth estimation and Gaussian Splatting.
+The architecture employs two complementary branches:
+\begin{itemize}
+    \item \textbf{Multi view branch:} Plane sweep stereo cost volumes providing geometric constraints from view correspondence
+    \item \textbf{Single view branch:} Features from pretrained Depth Anything V2 providing monocular depth priors
+\end{itemize}
+The fusion of monocular priors with multi view geometry achieves 27.47 PSNR on RealEstate10K, a 1.08 dB improvement over MVSplat.
+DepthSplat's dual branch design is particularly relevant for our retraining strategy: the monocular branch can be fine tuned on aerial imagery while the multi view branch provides geometric grounding.
+
+\textbf{Limitation for textureless backgrounds.}
+All cost volume methods compute photometric variance to identify surfaces.
+For objects against uniform sky, depth hypotheses produce similar low variance costs, degrading geometric signal.
+This limitation motivates either (1) operating on object crops where the target provides texture, or (2) incorporating silhouette based constraints.
+
+\subsection{Transformer Based Large Reconstruction Models}
+
+Large Reconstruction Models (LRMs) tokenize input images and process them through transformer blocks trained on massive datasets.
+
+\textbf{GS LRM}~\cite{zhang_gs-lrm_2024} patchifies input images and processes concatenated multi view tokens through sequential transformer blocks.
+Per pixel Gaussian parameters are decoded directly from output tokens.
+The model predicts high quality primitives from 2 to 4 posed images in 0.23 seconds on A100 GPU.
+
+\textbf{LGM}~\cite{leonardis_lgm_2025} fuses 4 fixed view inputs via transformer backbone, generating objects in approximately 5 seconds.
+
+\textbf{Assessment.}
+Transformer architectures learn strong semantic priors from Objaverse training.
+Their training distributions (centered objects, close range) diverge from surveillance scenarios.
+However, transformer based multi view fusion is amenable to retraining on domain specific data.
+GS LRM's architecture provides a template for custom training pipelines.
+
+\subsection{Hybrid and Volumetric Architectures}
+
+These methods construct intermediate 3D representations before decoding Gaussians.
+
+\textbf{Triplane Meets Gaussian Splatting}~\cite{zou_triplane_2023} decodes both explicit point clouds and implicit triplane features.
+Gaussian attributes are queried from the triplane at point locations.
+This balances explicit geometry with implicit feature continuity.
+
+\textbf{VolSplat}~\cite{wang_volsplat_2025} predicts a voxel grid and generates Gaussians from voxel features.
+The voxel aligned approach avoids view bias artifacts inherent to pixel aligned unprojection.
+Multi view consistency improves over pixel aligned alternatives.
+
+\textbf{Assessment.}
+Volumetric approaches provide natural integration with voxel based detection pipelines.
+The 3D grid representation enables seamless handoff from detection to reconstruction.
+
+\subsection{Pose Free and Unfavorable View Architectures}
+
+\textbf{FreeSplatter}~\cite{xu_freesplatter_2025} and \textbf{Splatt3R}~\cite{smart_splatt3r_2024} predict Gaussians without known camera parameters.
+Splatt3R builds on MASt3R, predicting pixel aligned pointmaps from uncalibrated pairs (4 FPS).
+
+\textbf{UFV Splatter}~\cite{fujimura_ufv-splatter_2025} adapts to ``unfavorable views'': off center objects, unusual angles, and non standard framing.
+Standard Objaverse trained models fail on such inputs; UFV Splatter's robustness addresses a practical surveillance requirement.
+
+\textbf{Assessment.}
+Our cameras are calibrated, so pose free capability is unnecessary.
+However, UFV Splatter's unfavorable view robustness is valuable since flying objects appear at arbitrary frame positions.
+
+\subsection{Recurrent Refinement Architectures}
+
+\textbf{ReSplat}~\cite{xu_resplat_2025} introduces a feed forward recurrent network that iteratively refines 3D Gaussians without explicit gradient computation.
+The method uses DepthSplat as its initialization model but operates in a 16$\times$ subsampled 3D space, producing 16$\times$ fewer Gaussians than per pixel methods.
+The key insight is that the Gaussian splatting rendering error serves as a feedback signal, guiding recurrent updates to improve reconstruction quality.
+
+On the DL3DV benchmark with 8 input views at 512$\times$960 resolution, ReSplat achieves 27.70 PSNR after 4 iterations, a 3.53 dB improvement over DepthSplat (24.17 PSNR) while using only 246K Gaussians compared to DepthSplat's 3.9M.
+The recurrent refinement also improves generalization to unseen datasets, view counts, and image resolutions.
+
+\textbf{Assessment.}
+ReSplat represents a promising direction for our pipeline.
+The iterative refinement could help address textureless background challenges by progressively correcting reconstruction errors.
+The reduced Gaussian count (16$\times$ fewer) aligns well with edge deployment constraints.
+However, the authors have not released code or pretrained models as of December 9th, 2025, despite stating their intention to do so.
+Furthermore, the paper explicitly notes that ReSplat targets scene level reconstruction rather than object centric settings.
+We therefore cannot adopt ReSplat for our current implementation but consider it a promising future direction once code becomes available and object centric adaptation is explored.
+
+\section{Training Considerations}
+
+We plan to retrain a feed forward model on curated data.
+This section identifies architecture properties relevant to custom training.
+
+\subsection{Data Requirements}
+
+\textbf{Objaverse curation.}
+The full Objaverse dataset contains more than 800K objects with variable quality.
+Effective training requires filtering for: (1) complete geometry without holes, (2) realistic materials, (3) appropriate scale.
+Aircraft, vehicles, and animals provide useful shape priors.
+
+\textbf{Domain specific assets.}
+Drone CAD models (DJI, custom builds) and rigged bird models enable fine tuning.
+Synthetic rendering in Isaac Sim provides ground truth depth, camera poses, and segmentation masks.
+
+\subsection{Depth Supervision Strategy}
+
+\textbf{Synthetic data.}
+Isaac Sim provides perfect depth maps for all rendered views.
+Training with $\mathcal{L}_\text{depth} = \|\hat{d} - d_\text{gt}\|_1$ alongside photometric loss anchors geometric learning.
+
+\textbf{Real data.}
+Depth Anything V2 or similar monocular estimators provide pseudo ground truth for real imagery.
+DepthSplat's architecture naturally accommodates this: the monocular branch processes pretrained depth features while the multi view branch provides geometric refinement.
+
+\subsection{Architecture Retrainability}
+
+Not all architectures are equally amenable to retraining:
+
+\begin{itemize}
+    \item \textbf{MVSplat / DepthSplat:} Modular design with clear separation of encoder, cost volume, and decoder. Well suited for component wise fine tuning.
+    \item \textbf{GS LRM:} Monolithic transformer requires full retraining or careful layer freezing. Higher compute requirements.
+    \item \textbf{pixelSplat:} Epipolar attention mechanism is geometry aware but entangled with probabilistic depth. Moderate retraining complexity.
+\end{itemize}
+
+\section{Architecture Selection: DepthSplat}
+
+This section presents our comparative analysis leading to the selection of DepthSplat as the reconstruction backbone.
+We evaluate candidate architectures against our pipeline requirements: geometric fidelity for classification, adaptability to aerial domains, robustness to textureless backgrounds, and practical considerations including open source availability.
+
+\subsection{Elimination of Transformer Based Approaches}
+
+GS LRM offers strong learned priors and competitive reconstruction quality (0.23s inference on A100).
+However, several factors disqualify it for our application.
+
+\textbf{Reproducibility concerns.}
+The original authors (Adobe Research) have not released official code or pretrained weights.
+Only an unofficial third party implementation exists\footnote{\url{https://github.com/InternRobotics/gs-lrm-unofficial}}, which implements only Stage 1 training and lacks evaluation code.
+For a research pipeline requiring custom retraining, reliance on incomplete unofficial implementations introduces unacceptable risk.
+
+\textbf{Training distribution mismatch.}
+GS LRM's $8 \times 8$ patch tokenization assumes close range objects (1.5 to 2.8 normalized units) filling the frame.
+Flying objects at distances of 10 to 100 meters appear as small targets with limited resolution, often failing to meet the minimum density required by the patchification scheme.
+Retraining would require architectural modifications beyond simple fine tuning.
+
+
+\subsection{Limitations of MVSplat for Object Centric Reconstruction}
+
+MVSplat provides an attractive baseline: minimal parameters (12M), fast inference (22 FPS), and explicit geometric grounding via cost volumes.
+However, the architecture exhibits fundamental limitations for our object centric setting.
+
+\textbf{Scene level design assumptions.}
+The MVSplat authors explicitly state their method ``mainly focuses on... scene-level reconstruction''~\cite{chen_mvsplat_2025}.
+The architecture assumes sufficient overlap among input views with continuous background geometry.
+These assumptions are violated when reconstructing isolated objects against sky.
+
+\textbf{Floating artifacts without background.}
+When applied to segmented objects or scenes lacking background geometry, MVSplat produces floating Gaussian artifacts.
+The cost volume relies on photometric consistency across the entire image.
+Without background texture to anchor depth hypotheses, spurious matches propagate to incorrect 3D locations.
+This behavior is documented in community discussions and follow up work (MVSplat360) which notes ``performance degradation with low texture or repetitive patterns.''
+
+\textbf{No monocular fallback.}
+In regions where multi view matching fails (textureless sky, specular surfaces), MVSplat has no secondary depth signal.
+The architecture lacks the monocular prior that could provide reasonable depth estimates when geometric correspondence degrades.
+
+\subsection{Advantages of DepthSplat}
+
+DepthSplat addresses the limitations of both transformer and pure cost volume approaches through its dual branch architecture.
+
+\textbf{Complementary depth estimation.}
+The fusion of monocular priors (Depth Anything V2) with multi view cost volumes provides robustness across challenging conditions.
+When cost volume matching degrades in textureless regions, the monocular branch provides reasonable depth estimates.
+Conversely, when monocular predictions are ambiguous, multi view geometry provides correction.
+This complementarity yields 1.08 dB PSNR improvement over MVSplat on RealEstate10K (27.47 vs.\ 26.39).
+
+\textbf{Modular retrainability.}
+The clear separation between monocular encoder, cost volume module, and Gaussian decoder enables targeted fine tuning:
+\begin{enumerate}
+    \item The Depth Anything V2 backbone can be fine tuned on aerial imagery to improve monocular priors for drones and birds
+    \item The cost volume decoder can be retrained on Isaac Sim synthetic data with ground truth depth
+    \item Individual components can be frozen during ablation studies
+\end{enumerate}
+
+\textbf{Open source availability.}
+DepthSplat provides official code and pretrained weights\footnote{\url{https://github.com/cvg/depthsplat}}, maintained by ETH Zurich's Computer Vision Group.
+Pretrained models are available on HuggingFace, enabling immediate experimentation before committing to full retraining.
+
+\subsection{Consideration of ReSplat for Future Work}
+
+ReSplat~\cite{xu_resplat_2025} represents the current state of the art in feed forward Gaussian splatting, achieving 3.5 dB PSNR improvement over DepthSplat through recurrent refinement.
+The method builds directly on DepthSplat's architecture for initialization, making it a natural extension of our chosen approach.
+
+The iterative refinement mechanism is particularly appealing for our application.
+The rendering error feedback could help correct reconstruction artifacts in textureless sky regions by progressively improving Gaussian placement.
+The 16$\times$ reduction in Gaussian count also aligns with edge deployment constraints on NVIDIA Jetson platforms.
+
+However, we cannot adopt ReSplat for our current implementation due to two practical constraints.
+First, the authors have not released code or pretrained models as of December 9th, 2025, despite stating ``We will release our code, pre-trained models, training and evaluation scripts.''
+Second, the paper explicitly notes that ReSplat targets scene level benchmarks, and the comparison with SplatFormer reveals that adapting such methods to object centric settings is ``particularly challenging'' and requires careful normalization and grid size tuning.
+
+We consider ReSplat a promising direction for future work once code becomes available and object centric adaptation strategies are developed.
+
+\subsection{Addressing Textureless Backgrounds}
+
+While DepthSplat's monocular branch provides some robustness to textureless regions, sky backgrounds remain challenging.
+The DepthSplat authors acknowledge that cost volume methods ``inherently suffer from the limitation of feature matching in challenging situations like texture-less regions''~\cite{xu_depthsplat_2025}.
+
+We propose augmenting the training objective with a silhouette consistency loss:
+\begin{equation}
+    \mathcal{L}_\text{silhouette} = \text{BCE}\left(\sum_i \alpha_i \cdot G_i(\mathbf{p}), M_\text{gt}(\mathbf{p})\right)
+\end{equation}
+where $\alpha_i$ is Gaussian opacity, $G_i(\mathbf{p})$ is the 2D Gaussian contribution at pixel $\mathbf{p}$, and $M_\text{gt}$ is the ground truth foreground mask.
+This loss encourages the reconstructed Gaussians to match object silhouettes even when photometric gradients vanish, providing supervision signal independent of texture.
+
+Isaac Sim provides perfect segmentation masks for synthetic training data, enabling this supervision without additional annotation effort.
+Similar silhouette based constraints have proven effective in optimization based methods (SplaTAM, GS SFS) but remain unexplored in feed forward architectures.
+
+\subsection{Alternative Considerations}
+
+\textbf{UFV Splatter} addresses unfavorable viewing conditions relevant to surveillance (off center objects, non standard framing).
+However, as a recent preprint (July 2025), it lacks the maturity and community validation of DepthSplat.
+Its pose free design may sacrifice geometric precision when calibration is available, as in our setup.
+We consider UFV Splatter's ``recentering'' strategy as a potential data augmentation technique rather than a primary architecture choice.
+
+\textbf{GPS Gaussian} provides symmetric depth estimation eliminating floating artifacts.
+However, it targets human reconstruction with dense multi view capture (4+ synchronized cameras at close range), diverging from our sparse wide baseline setup.
+
+\textbf{pixelSplat} pioneered feed forward Gaussian splatting but requires 80GB VRAM (A100/H100) for training, limiting accessibility.
+The probabilistic depth formulation handles ambiguity gracefully but does not incorporate monocular priors for textureless fallback.
+
+\section{Excluded Architectures}
+
+The following architectures are explicitly excluded:
+
+\textbf{Diffusion based methods} (Zero123, One2345, diffusion enhanced 3DGS): Hallucination of unobserved geometry corrupts classification features.
+
+\textbf{Single view methods} (Splatter Image, SAM 3D): Reliance on learned priors for depth and unobserved regions conflicts with multi view setup.
+
+\textbf{Pose free methods} (Splatt3R, FreeSplatter): Sacrifice geometric precision when calibration is available.
+
+\section{Conclusion}
+
+For classification oriented 3D reconstruction, architecture selection prioritizes geometric fidelity over visual plausibility.
+Depth supervision during training proves critical for learning transferable representations.
+Diffusion based methods are excluded to prevent hallucinated features from corrupting downstream classification.
+
+Table~\ref{tab:architecture-comparison} summarizes our comparative analysis.
+DepthSplat emerges as the optimal choice due to its dual branch design combining monocular priors with multi view geometry, official open source implementation, and modular architecture supporting targeted fine tuning.
+The addition of silhouette consistency loss during retraining addresses the inherent cost volume limitation for textureless backgrounds.
+
+\begin{table}[htbp]
+\centering
+\caption{Comparative analysis of feed forward 3DGS architectures for aerial object reconstruction. DepthSplat provides the best combination of performance, modularity, and practical availability for our object centric retraining requirements.}
+\label{tab:architecture-comparison}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Criterion} & \textbf{DepthSplat} & \textbf{MVSplat} & \textbf{GS LRM} & \textbf{pixelSplat} & \textbf{ReSplat} \\
+\midrule
+PSNR (RealEstate10K) & 27.47 & 26.39 & 28.10 & 25.89 & \textbf{29.75} \\
+PSNR (DL3DV, 8 views) & 24.17 & 22.49 & --- & --- & \textbf{27.70} \\
+Parameters & 354M & \textbf{12M} & 305M & 125M & 223M \\
+Inference speed & 10 FPS & \textbf{22 FPS} & 4.3 FPS & 11 FPS & 7 FPS \\
+\midrule
+Monocular depth prior & \cmark & \xmark & \xmark & \xmark & \cmark$^\dagger$ \\
+Multi view cost volume & \cmark & \cmark & \xmark & \xmark & \cmark$^\dagger$ \\
+Object centric support & \cmark & \xmark$^*$ & \cmark & \cmark & \xmark$^\ddagger$ \\
+Textureless robustness & Partial$^\S$ & \xmark & \xmark & \xmark & Improved \\
+Iterative refinement & \xmark & \xmark & \xmark & \xmark & \cmark \\
+\midrule
+Official open source & \cmark & \cmark & \xmark$^\|$ & \cmark & \xmark$^{**}$ \\
+Modular retrainability & \cmark & \cmark & \xmark & Partial & Unknown \\
+Training hardware & A6000 & RTX 4090 & A100 & A100 80GB & GH200 \\
+\midrule
+\textbf{Selected} & \cmark & & & & \\
+\bottomrule
+\end{tabular}%
+}
+
+\vspace{0.5em}
+\footnotesize
+$^*$MVSplat produces floating artifacts on segmented objects without background geometry (scene level design). \\
+$^\dagger$ReSplat uses DepthSplat for initialization, inheriting its dual branch design. \\
+$^\ddagger$ReSplat explicitly targets scene level benchmarks; object centric adaptation is noted as ``particularly challenging.'' \\
+$^\S$Monocular branch provides fallback; silhouette loss proposed for further improvement. \\
+$^\|$Only unofficial third party implementation available. \\
+$^{**}$Code not released as of December 9th, 2025, despite authors' stated intention.
+\end{table}
+
+
+
+
+
+
+% \section{Related Work}
+
+% \subsection{Dynamic Gaussian Splatting Reconstruction}
+
+% Reconstructing dynamic scenes with 3D Gaussian Splatting requires modeling temporal deformation or producing per-frame representations.
+% Per-scene optimization methods dominate this landscape; 4D-GS \cite{Wu2024} applies HexPlane deformation fields to canonical Gaussians achieving 82 FPS rendering but requiring minutes of optimization per scene.
+% Dynamic 3D Gaussians \cite{Luiten2024} maintains explicit Gaussian identities through fixed appearance attributes and local-rigidity constraints, enabling robust tracking at the cost of scene-specific training.
+% Feed-forward approaches have emerged more recently.
+% BulletTimer \cite{BulletTimer2024} achieves approximately 150ms inference using motion-aware aggregation across frames, though it produces independent per-timestamp reconstructions without persistent Gaussian identities.
+% Domain-specific solutions such as WorldSplat \cite{WorldSplat2024} and UniSplat \cite{UniSplat2024} target autonomous driving scenarios.
+% No generalizable feed-forward 4DGS method currently produces temporally consistent Gaussian identities, creating a fundamental challenge for motion-based classification.
+
+% \subsection{Temporal Correspondence in Point Clouds}
+
+% Establishing correspondence between independent frame reconstructions enables trajectory-based analysis.
+% Feed-forward scene flow methods offer varying speed-accuracy tradeoffs: FLOT \cite{Puy2020} uses optimal transport for lightweight non-iterative matching at approximately 40ms for 8k points; PointPWC-Net \cite{Wu2020PointPWC} applies coarse-to-fine cost volumes with hierarchical refinement; ZeroFlow \cite{ZeroFlow2024} distills Neural Scene Flow Prior \cite{NSFP2021} into FastFlow3D \cite{FastFlow3D2021} achieving 34 FPS with strong accuracy.
+% For Gaussian-specific matching, descriptor-based strategies combining position, color, scale, and rotation features with attention mechanisms demonstrate improved robustness \cite{DCP2019,GeoTransformer2022}.
+% These methods could establish trajectories between per-frame DepthSplat \cite{DepthSplat2024} reconstructions, enabling motion analysis for drone-bird discrimination.
+% However, correspondence errors accumulate across frames and computational overhead scales with sequence length.
+
+% \subsection{Set-Based Temporal Learning}
+
+% An alternative paradigm treats consecutive frames as unordered point sets, learning motion signatures without explicit tracking.
+% P4Transformer \cite{Fan2021} pioneered this direction with Point 4D Convolution embedding spatio-temporal local structures followed by transformer self-attention; the architecture merges related local areas through attention weights rather than explicit correspondence.
+% PST-Transformer \cite{PST2022} decoupled spatial and temporal encoding, exploiting timestamp regularities absent in irregular point coordinates.
+% Mamba4D \cite{Mamba4D2025} represents the current state of the art, achieving 87.5\% GPU memory reduction and 5.36$\times$ speedup over transformer methods through disentangled spatial-temporal state space modeling with linear complexity.
+% These architectures naturally handle varying point counts per frame through symmetric pooling operations.
+% For classifying drone versus bird from Gaussian sequences, set-based methods sidestep the unsolved feed-forward correspondence problem entirely.
+
+% \subsection{Motion Segmentation in Gaussian Representations}
+
+% Identifying dynamic Gaussians, those belonging to rotors or wings versus static body structures, enables targeted motion analysis.
+% DynaSplat \cite{DynaSplat2024} classifies Gaussians by fusing deformation offset statistics with 2D optical flow consistency using per-Gaussian temporal variance thresholds.
+% Motion-Blender Gaussian Splatting \cite{MotionBlender2025} employs motion graphs with dual quaternion skinning to propagate rigid motion to individual Gaussians.
+% Discriminative attributes include position trajectories revealing oscillation patterns, quaternion dynamics distinguishing spinning from flapping motions, and scale variations indicating rigid versus deformable motion.
+% High spatial coherence among neighboring Gaussians suggests rigid blade structures; low coherence indicates articulated wings with feather deformation.
+
+% \subsection{Frequency-Domain Motion Analysis}
+
+% Drones and birds exhibit fundamentally different frequency signatures exploitable for classification.
+% Radar micro-Doppler studies document rotor frequencies of 50 to 200 Hz versus wing flapping frequencies of 4 to 10 Hz \cite{Chen2014,Molchanov2014}.
+% FFT applied to position time series extracts dominant frequencies while Short-Time Fourier Transform captures time-varying content.
+% HERM lines, Helicopter Rotor Modulation signatures, appear at characteristic blade-pass frequencies equal to blade count multiplied by rotational speed \cite{HERM2020}.
+% This spectral signature is nearly impossible for biological flight to produce.
+% For 3DGS sequences sampled at 10 Hz (100ms intervals), direct observation of rotor rotation violates Nyquist constraints.
+% However, rotor blur manifests in Gaussian parameters as elongated scales and opacity distributions, providing indirect frequency information.
+% Wing flapping at 4 to 10 Hz remains directly observable and produces periodic reversals in quaternion angular velocity distinguishable from continuous rotor rotation.
+
+% \subsection{State Space Models for Point Cloud Sequences}
+
+% State space models adapted for 3D data achieve linear complexity crucial for real-time edge deployment.
+% PointMamba \cite{PointMamba2024} uses space-filling curves for point tokenization with O(N) complexity.
+% Mamba3D \cite{Mamba3D2024} adds Local Norm Pooling for geometric features with bidirectional processing over feature channels rather than token order, improving stability for unordered point data.
+% Mamba4D \cite{Mamba4D2025} provides the template architecture combining Intra-frame Spatial Mamba encoding geometric structures with Inter-frame Temporal Mamba integrating features across entire sequences.
+% Gamba \cite{Gamba2024} demonstrated Mamba integration with Gaussian Splatting for single-view reconstruction at 0.05s inference.
+% No existing work applies state space models to 3DGS temporal sequences for motion classification, representing a clear research gap.
+
+% \subsection{SE(3)-Equivariant Networks}
+
+% Robust classification independent of camera viewpoint requires architectures where outputs depend only on intrinsic motion patterns.
+% EGNN \cite{Satorras2021} achieves SE(3)-equivariance efficiently without spherical harmonics, using distance-only invariant features with coordinate updates based on relative positions at approximately 1.5$\times$ the computational overhead of standard GNNs.
+% For temporal equivariance, EGNO \cite{EGNO2024} models dynamics through Fourier-space temporal convolutions preserving spatial equivariance.
+% TESGNN \cite{TESGNN2024} combines equivariant scene graph networks with temporal graph matching.
+% Gaussian parameters map naturally to equivariant representations: positions as type-1 vectors, rotations as multiple type-1 vectors, and scale and opacity as type-0 scalars.
+% An architecture combining EGNN spatial encoding with Mamba temporal modeling ensures classification invariance to multi-camera observation geometry while maintaining linear complexity for edge deployment.

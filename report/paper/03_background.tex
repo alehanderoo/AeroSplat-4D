@@ -1,0 +1,428 @@
+\chapter{Background}
+\label{chap:background}
+This chapter reviews basic concepts in multi view geometry, 3D Gaussian Splatting, and deep learning primitives. These concepts describe the methods developed in this thesis. 
+Section~\ref{sec:background-mvg} introduces the geometric principles that allow 3D reconstruction from multiple camera views. 
+Section~\ref{sec:gaussian-splatting} explains the math behind 3D Gaussian Splatting as an explicit scene representation. 
+Finally, Section~\ref{sec:deep_learning_primitives} looks at neural network architectures and mechanisms (attention, equivariance, permutation invariance, and state space models). These form the building blocks of our temporal classification pipeline.
+
+
+\section{Multi View Geometry Fundamentals}
+\label{sec:background-mvg}
+
+Multi view geometry provides the mathematical framework to understand three dimensional structure from two dimensional images~\cite{hartley2004,faugeras1993}. 
+This section explains the geometric basics of our multi camera reconstruction pipeline. It covers individual camera models and the constraints that appear when multiple cameras look at the same scene.
+\todo{SfM, MVS}
+
+\subsection{Camera Models and Projection}
+
+We use the pinhole camera model. It simplifies image formation as a central projection through a very small hole~\cite{hartley2004}. 
+A 3D point $\mathbf{X} = (X, Y, Z)^\top$ in world coordinates projects to a 2D image point $\mathbf{x} = (u, v)^\top$ according to:
+\begin{equation}
+\label{eq:projection}
+\tilde{\mathbf{x}} = \mathbf{K}[\mathbf{R} \mid \mathbf{t}]\tilde{\mathbf{X}}
+\end{equation}
+where $\tilde{\mathbf{x}}$ and $\tilde{\mathbf{X}}$ are homogeneous coordinates. The projection splits into intrinsic and extrinsic parts~\cite{hartley2004}.
+
+The intrinsic matrix $\mathbf{K} \in \mathbb{R}^{3 \times 3}$ contains the optical properties of the camera~\cite{hartley2004}:
+\begin{equation}
+\mathbf{K} = \begin{bmatrix} f_x & s & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1 \end{bmatrix}
+\end{equation}
+where $f_x, f_y$ are focal lengths in pixels, $(c_x, c_y)$ is the principal point, and $s$ captures sensor skew (usually zero for modern cameras). 
+These parameters stay fixed after calibration~\cite{zhang2000,tsai1987}.
+
+The extrinsic parameters $[\mathbf{R} \mid \mathbf{t}]$ define the camera pose in world coordinates: rotation $\mathbf{R} \in SO(3)$ and translation $\mathbf{t} \in \mathbb{R}^3$~\cite{hartley2004}. 
+Together, they transform world points into the local coordinate frame of the camera before projection.
+
+
+
+\subsection{Epipolar Geometry}
+
+When two cameras look at the same scene, their geometric relationship limits where matching points can appear~\cite{hartley2004,longuethiggins1981}. 
+Consider cameras with projection matrices $\mathbf{P} = \mathbf{K}[\mathbf{R} \mid \mathbf{t}]$ and $\mathbf{P}' = \mathbf{K}'[\mathbf{R}' \mid \mathbf{t}']$. 
+A 3D point $\mathbf{X}$ projects to $\mathbf{x}$ in the first image and $\mathbf{x}'$ in the second. 
+These matches satisfy the epipolar constraint~\cite{longuethiggins1981,hartley2004}:
+\begin{equation}
+\label{eq:epipolar}
+\mathbf{x}'^\top \mathbf{F} \mathbf{x} = 0
+\end{equation}
+where $\mathbf{F} \in \mathbb{R}^{3 \times 3}$ is the fundamental matrix. It is a rank 2 matrix that describes the relative geometry between pairs of cameras~\cite{hartley2004}.
+
+Geometrically, this constraint means that $\mathbf{x}'$ must lie on the \textit{epipolar line} $\mathbf{l}' = \mathbf{F}\mathbf{x}$. This line is the projection of the ray from the first camera through $\mathbf{x}$ onto the second image plane~\cite{hartley2004}. 
+This reduces the search for matches from 2D to 1D, a principle used in stereo matching.
+
+For calibrated cameras, the essential matrix $\mathbf{E} = \mathbf{K}'^\top \mathbf{F} \mathbf{K}$ gives a metric version of this constraint. It encodes only rotation and translation (up to scale)~\cite{longuethiggins1981,hartley2004}. 
+We have $\mathbf{E} = [\mathbf{t}]_\times \mathbf{R}$, where $[\mathbf{t}]_\times$ is the skew symmetric cross product matrix.
+
+\subsection{Triangulation and 3D Point Recovery}
+
+Given matching image points $\mathbf{x}, \mathbf{x}'$ and known camera matrices, triangulation recovers the 3D point $\mathbf{X}$ that projects to both observations~\cite{hartley2004}. 
+Geometrically, we look for the intersection of two back projected rays. 
+Because of noise, these rays rarely intersect exactly. Practical methods minimize reprojection error.
+
+Linear triangulation sets up the problem as a homogeneous system~\cite{hartley2004}. 
+From $\tilde{\mathbf{x}} \times \mathbf{P}\tilde{\mathbf{X}} = \mathbf{0}$ (the cross product of parallel vectors is zero), we get two independent equations per view. 
+Stacking constraints from multiple views creates an overdetermined system $\mathbf{A}\tilde{\mathbf{X}} = \mathbf{0}$. This is solved via SVD to find the unit singular vector that corresponds to the smallest singular value~\cite{hartley2004}.
+
+The accuracy of triangulation depends heavily on the ratio between the baseline and the depth. Cameras that are far apart give more precise depth estimates than cameras that are close together~\cite{hartley2004}. 
+For a flying object at distance $d$ with baseline $b$ and pixel noise $\sigma$, depth uncertainty scales roughly as $\sigma_d \propto d^2 / (b \cdot f)$. 
+This is why we distribute cameras around the monitored volume instead of grouping them together.
+
+\subsection{Visual Hulls and Silhouette Based Reconstruction}
+\label{subsec:visual-hulls}
+
+When object silhouettes are available from multiple views, visual hull methods offer another way to reconstruct objects without using features~\cite{laurentini1994}. 
+The visual hull is defined as the intersection of viewing cones. These are the 3D regions that project inside the object silhouette in each image~\cite{laurentini1994}.
+
+Formally, let $S_i \subset \mathbb{R}^2$ be the silhouette region in camera $i$. 
+The viewing cone $\mathcal{C}_i$ consists of all 3D points projecting into $S_i$. 
+The visual hull is:
+\begin{equation}
+\mathcal{V} = \bigcap_{i=1}^{N} \mathcal{C}_i
+\end{equation}
+
+As described by Laurentini~\cite{laurentini1994}, visual hulls provide an \textit{outer bound} on object geometry. 
+They match the true shape only for convex objects seen from enough angles. 
+Hollow parts that cannot be seen in the silhouettes are not removed. 
+However, visual hulls have computational advantages. They only require foreground segmentation (not dense matches) and handle objects without texture well.
+
+Practical implementations divide the volume into a 3D grid (voxel carving). They mark voxels as occupied if they project inside all silhouettes~\cite{kutulakos2000}. 
+This volumetric voting approach extends naturally to probabilistic methods where each camera adds evidence for occupancy~\cite{kutulakos2000}.
+
+\subsection{Connection: Why $N \geq 3$ Cameras Enable Robust 3D Inference}
+
+The setup of multiple cameras in this thesis uses $N \geq 3$ cameras facing upwards with overlapping fields of view. 
+This setup uses the geometric ideas described before.
+
+While two cameras create epipolar constraints, the depth stays unclear along epipolar lines in regions without texture. 
+A third camera adds intersecting constraints that solve this problem. 
+In our scenario with a sky background, where matching based on light intensity fails, this geometric redundancy is necessary.
+
+With three or more views, linear triangulation becomes overdetermined. 
+Errors in one view are fixed by information from the others. 
+This improves resistance to segmentation errors and temporary occlusions.
+
+The foreground segmentation in our pipeline (Section~\ref{sec:method-segmentation}) extends the principles of the visual hull. 
+We classify 3D regions as occupied when they project to the detected foreground in at least 3 cameras. 
+This threshold ensures robustness against false positives in individual views while keeping sensitivity to real objects.
+
+Flying objects at a range of 10 to 100 meters need large baselines to recover depth accurately. 
+Our placement of distributed cameras keeps good ratios between the baseline and depth despite the large distances.
+
+These geometric foundations support the processing stages of our pipeline. 
+They include projection, epipolar constraints, triangulation, and volumetric reconstruction. 
+These elements allow 3D inference from RGB observations alone.
+\todo{FIGURE: [Suggested diagram showing camera projection geometry]}
+% Content: World coordinate frame with 3D point X, two cameras showing projection through 
+% pinhole to image planes, labeled with K, [R|t], and resulting image points x, x'. 
+
+% Include epipolar lines and epipoles to illustrate the epipolar constraint.
+
+
+
+
+
+
+
+
+
+% \section{Neural Radiance Fields}
+% \label{sec:nerf_background}
+
+% ~\cite{mildenhall2020nerf}. A neural network $F_\Theta$ maps a 3D position $\mathbf{x}$ and viewing direction $\mathbf{d}$ to a volume density $\sigma$ and RGB color $\mathbf{c}$:
+% \begin{equation}
+% (\sigma, \mathbf{c}) = F_\Theta(\mathbf{x}, \mathbf{d})
+% \end{equation}
+% To render an image, rays are cast from the camera center through pixels. The color of a ray $\mathbf{r}(t) = \mathbf{o} + t\mathbf{d}$ is computed by accumulating color and density along the ray using the volume rendering equation:
+% \begin{equation}
+% \label{eq:vol_rendering}
+% C(\mathbf{r}) = \int_{t_n}^{t_f} T(t) \sigma(\mathbf{r}(t)) \mathbf{c}(\mathbf{r}(t), \mathbf{d}) \, dt
+% \end{equation}
+% where $T(t) = \exp(-\int_{t_n}^t \sigma(s) ds)$ is the accumulated transmittance, representing the probability that the ray travels from $t_n$ to $t$ without hitting any particles. In practice, this integral is approximated using stratified sampling.
+
+% Standard neural networks struggle to learn high frequency details due to spectral bias. To address this, NeRF maps input coordinates to a higher dimensional space using sinusoidal positional encoding:
+% \begin{equation}
+% \gamma(p) = (\sin(2^0 \pi p), \cos(2^0 \pi p), \ldots, \sin(2^{L-1} \pi p), \cos(2^{L-1} \pi p))
+% \end{equation}
+% This allows the network to capture fine geometric and texture details.
+
+% insert image
+
+% \todo{Figure: [Suggested diagram showing NeRF rendering pipeline]}
+% \begin{figure}[h]
+%     \centering
+%     \includegraphics[width=0.9\textwidth]{img/nerf_diagram.png}
+%     \caption{Neural Radiance Field rendering pipeline. A neural network maps 3D positions and viewing directions to density and color. Rays are cast from the camera, and colors are accumulated along the rays using volume rendering.}
+%     \label{fig:nerf_diagram}
+% \end{figure}
+
+
+
+\section{3D Gaussian Splatting Formulation}
+\label{sec:gaussian-splatting}
+
+Neural Radiance Fields (NeRF) revolutionized novel view synthesis by representing scenes as continuous volumetric functions rather than discrete meshes or points, but they require costly sampling for each ray during rendering~\cite{mildenhall2020nerf}. 
+3D Gaussian Splatting (3DGS) offers an alternative. It is an explicit scene representation that uses groups of anisotropic Gaussian primitives. These can be rendered via efficient rasterization instead of ray marching~\cite{kerbl20233dgs}. 
+This section introduces the math behind Gaussian based scene representations.
+
+\paragraph{Gaussian Primitive Parameterization}
+
+A 3D Gaussian Splatting representation consists of a set $\mathcal{G} = \{G_i\}_{i=1}^{N}$ of $N$ Gaussian primitives. Each primitive $G_i$ is defined by the following parameters~\cite{kerbl20233dgs}:
+
+The mean $\boldsymbol{\mu} \in \mathbb{R}^3$ specifies the center of the Gaussian in world coordinates.
+
+Instead of storing the full covariance matrix $\boldsymbol{\Sigma} \in \mathbb{R}^{3 \times 3}$ directly, 3DGS splits it into a scale vector $\mathbf{s} \in \mathbb{R}^3$ and a rotation quaternion $\mathbf{q} \in \mathbb{R}^4$. 
+The covariance is reconstructed as:
+\begin{equation}
+\boldsymbol{\Sigma} = \mathbf{R}\mathbf{S}\mathbf{S}^T\mathbf{R}^T
+\label{eq:covariance}
+\end{equation}
+where $\mathbf{S} = \text{diag}(\mathbf{s})$ is a diagonal scaling matrix and $\mathbf{R}$ is the rotation matrix derived from the unit quaternion $\mathbf{q}$. 
+This split guarantees positive semi definiteness. It also reduces parameters from 6 (symmetric matrix) to 7 (scale + quaternion), and the quaternion constraint ensures valid rotations.
+
+A scalar $\alpha \in [0,1]$ controls the contribution of the Gaussian to the rendered image. 
+Low opacity creates semi-transparent effects. High opacity produces solid surfaces.
+
+Appearance is encoded using spherical harmonic (SH) coefficients that model view dependent color variation. 
+For degree $\ell$, each Gaussian stores $({\ell}+1)^2$ coefficients per color channel. 
+Degree 0 captures diffuse color. Higher degrees encode specular reflections. 
+At render time, SH coefficients are evaluated for the viewing direction to produce RGB values $\mathbf{c} \in \mathbb{R}^3$.
+
+The complete parameter vector for a single Gaussian is thus:
+\begin{equation}
+\theta_i = \{\boldsymbol{\mu}_i, \mathbf{s}_i, \mathbf{q}_i, \alpha_i, \mathbf{c}_i^{\text{SH}}\}
+\end{equation}
+where $\mathbf{c}_i^{\text{SH}}$ denotes the SH coefficient tensor. 
+% A typical scene may contain $10^5$ to $10^7$ Gaussians.
+
+\todo{FIGURE: [Gaussian primitive visualization]}
+% Content: Diagram showing a single 3D Gaussian ellipsoid with labeled parameters (μ at center, axes showing scale s, rotation indicated, opacity α as transparency level, and color c). Include coordinate axes and show how the ellipsoid shape emerges from Σ = RSS^TR^T.
+
+\paragraph{Differentiable Rasterization}
+
+Rendering a Gaussian scene requires projecting all primitives to screen space and combining their contributions. 
+Unlike volumetric ray marching, 3DGS uses \textit{splatting}: each Gaussian is projected as a 2D ellipse and rendered directly~\cite{kerbl20233dgs}.
+
+The projection of a 3D Gaussian to 2D follows the Elliptical Weighted Average (EWA) splatting framework~\cite{zwicker2002ewa}. 
+Given camera extrinsics $[\mathbf{R}_c | \mathbf{t}_c]$ and the Jacobian $\mathbf{J}$ of the projective transformation at the Gaussian center, the 2D covariance becomes:
+\begin{equation}
+\boldsymbol{\Sigma}' = \mathbf{J} \mathbf{W} \boldsymbol{\Sigma} \mathbf{W}^T \mathbf{J}^T
+\label{eq:ewa-projection}
+\end{equation}
+where $\mathbf{W}$ is the viewing transformation matrix. 
+The resulting $\boldsymbol{\Sigma}' \in \mathbb{R}^{2 \times 2}$ defines an elliptical footprint on the image plane. 
+For a pixel at position $\mathbf{p}$, the contribution of the Gaussian is weighted by:
+\begin{equation}
+G(\mathbf{p}) = \exp\left(-\frac{1}{2}(\mathbf{p} - \boldsymbol{\mu}')^T {\boldsymbol{\Sigma}'}^{-1} (\mathbf{p} - \boldsymbol{\mu}')\right)
+\end{equation}
+where $\boldsymbol{\mu}'$ is the projected 2D mean.
+
+To achieve real time performance, the image is divided into tiles (typically $16 \times 16$ pixels). 
+Gaussians are sorted by depth and assigned to tiles they overlap. 
+Each tile then processes only its relevant Gaussians, which allows parallel GPU execution~\cite{kerbl20233dgs}. 
+This tile based approach avoids the per pixel ray sampling of NeRF style methods.
+
+\paragraph{Alpha Compositing}
+
+The final pixel color results from front-to-back alpha compositing of depth-sorted Gaussians. 
+Let $\{G_1, \ldots, G_M\}$ be the Gaussians overlapping a pixel, sorted by increasing depth. 
+The rendered color is:
+\begin{equation}
+C = \sum_{i=1}^{M} c_i \alpha_i G_i(\mathbf{p}) \prod_{j=1}^{i-1}\left(1 - \alpha_j G_j(\mathbf{p})\right)
+\label{eq:alpha-compositing}
+\end{equation}
+
+The product term $T_i = \prod_{j=1}^{i-1}(1 - \alpha_j G_j(\mathbf{p}))$ represents \textit{transmittance}. This is the fraction of light reaching Gaussian $i$ after absorption by previous Gaussians. 
+Rendering stops early when accumulated opacity approaches 1, which provides additional speedup.
+
+\todo{FIGURE: [EWA projection and compositing pipeline]}
+% Content: Left: 3D Gaussian ellipsoid with camera viewing it. 
+% Middle: projection showing the 2D ellipse footprint on image plane via EWA. 
+% Right: multiple overlapping 2D ellipses being alpha-composited front-to-back, showing transmittance decay.
+
+\paragraph{Optimization Objective}
+
+The standard 3DGS training objective combines photometric losses~\cite{kerbl20233dgs}:
+\begin{equation}
+\mathcal{L} = (1 - \lambda)\mathcal{L}_1 + \lambda\mathcal{L}_{\text{D-SSIM}}
+\label{eq:gs-loss}
+\end{equation}
+where $\mathcal{L}_1 = \|C_{\text{pred}} - C_{\text{gt}}\|_1$ measures pixel-wise absolute error, $\mathcal{L}_{\text{D-SSIM}} = 1 - \text{SSIM}(C_{\text{pred}}, C_{\text{gt}})$ captures structural similarity~\cite{wang2004ssim}, and $\lambda = 0.2$ balances the two terms. 
+The D-SSIM component encourages perceptually coherent reconstructions beyond pixel accuracy.
+
+Optimization proceeds via gradient descent on all Gaussian parameters. 
+Crucially, the entire pipeline is differentiable. This allows end-to-end training from multi-view images.
+
+
+
+
+
+
+
+
+\subsection{Connection to Flying Object Reconstruction}
+
+The Gaussian splatting formulation offers several properties that are suitable for our surveillance setting:
+
+\begin{itemize}
+    \item Unlike implicit neural representations that require dense sampling, Gaussians provide explicit 3D positions and extents. 
+This allows direct geometric reasoning about the location and size of the object, which is critical for tracking.
+    \item Rasterization based on tiles achieves rendering speeds of over 100 FPS. This is orders of magnitude faster than volume rendering. 
+This permits rapid testing of hypotheses and verification of consistency across multiple views.
+    \item The decomposed parameterization (position, scale, rotation, opacity, color) provides a structured representation. 
+Temporal changes in these parameters (such as the rigid motion of a drone versus the wing articulation of a bird) form discriminative features for classification.
+    \item Gaussians can represent scenes from fewer views than methods based on dense stereo require, as each primitive contributes to the reconstruction independently.
+
+\end{itemize}
+
+These properties make 3D Gaussians natural intermediate representations for our pipeline. 
+Reconstructed Gaussians from frames with multiple views become input tokens to the temporal classifier introduced in Section \ref{sec:deep_learning_primitives}.
+
+
+
+
+\section{Deep Learning Primitives}
+\label{sec:deep_learning_primitives}
+
+This section introduces the architectural components that support the 4D temporal classifier developed in this thesis. 
+We start with attention mechanisms and Transformers. Then we look at symmetry constraints that are essential for processing 3D data. Finally, we discuss state space models that offer computational benefits for real-time deployment.
+
+\subsection{Self Attention and Transformer Architecture}
+\label{subsec:attention}
+
+The attention mechanism allows neural networks to weight input elements dynamically based on how relevant they are to a specific query. 
+Consider a sequence of $N$ input tokens. Each token is a $d$ dimensional vector. 
+We organize these tokens into three matrices: queries $\mathbf{Q} \in \mathbb{R}^{N \times d_k}$, keys $\mathbf{K} \in \mathbb{R}^{N \times d_k}$, and values $\mathbf{V} \in \mathbb{R}^{N \times d_v}$. These are obtained through learned linear projections of the input.
+
+Scaled dot product attention calculates a weighted combination of values:
+\begin{equation}
+\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right)\mathbf{V}
+\label{eq:attention}
+\end{equation}
+
+The scaling factor $\sqrt{d_k}$ stops the dot products from becoming too large. Large values would push the softmax into regions with vanishing gradients. 
+Intuitively, each query calculates similarity scores against all keys. Then it collects values based on these scores.
+
+Multi head attention extends this mechanism. It runs $H$ parallel attention operations, each with independent projections:
+\begin{equation}
+\text{MultiHead}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{Concat}(\text{head}_1, \ldots, \text{head}_H)\mathbf{W}^O
+\end{equation}
+where $\text{head}_i = \text{Attention}(\mathbf{Q}\mathbf{W}_i^Q, \mathbf{K}\mathbf{W}_i^K, \mathbf{V}\mathbf{W}_i^V)$ and $\mathbf{W}^O$ projects the concatenated outputs. 
+Multiple heads allow the model to attend to information from different representation subspaces at the same time.
+
+The Transformer architecture~\cite{vaswani_attention_2017} stacks layers of multi-head self-attention with position-wise feed-forward networks. 
+The Vision Transformer (ViT)~\cite{dosovitskiy2020image} adapts this design for images. It splits an image into fixed size patches, linearly embeds each patch, and adds learnable position embeddings to encode spatial structure.
+
+A critical factor for our application is computational complexity. 
+Self-attention calculates pairwise interactions between all tokens. This results in $O(N^2)$ time and memory complexity with respect to sequence length $N$. 
+For long sequences of Gaussian primitives or extended temporal windows, this quadratic scaling can be too much. This motivates the state space alternatives discussed in Section~\ref{subsec:ssm}.
+
+\todo{FIGURE: [diagram showing the self-attention computation flow]}
+% Content: Input tokens → Q,K,V projections → Attention matrix computation → Weighted value aggregation → Output
+
+\subsection{SE(3) Equivariance}
+\label{subsec:equivariance}
+
+Flying objects seen from ground cameras may appear in any orientation. 
+A drone flying at an angle from the north looks different than one coming from the east, but both should be classified the same way. 
+This observation motivates adding geometric symmetries to neural architectures.
+
+The special Euclidean group SE(3) includes all rigid transformations in three dimensional space: rotations combined with translations. 
+Formally, an element $g \in \text{SE}(3)$ acts on a point $\mathbf{x} \in \mathbb{R}^3$ as $g \cdot \mathbf{x} = \mathbf{R}\mathbf{x} + \mathbf{t}$. Here $\mathbf{R} \in \text{SO}(3)$ is a rotation matrix and $\mathbf{t} \in \mathbb{R}^3$ is a translation vector.
+
+We distinguish two related but different properties. 
+A function $f$ is invariant to SE(3) transformations if:
+\begin{equation}
+f(g \cdot \mathbf{x}) = f(\mathbf{x}) \quad \forall g \in \text{SE}(3)
+\label{eq:invariance}
+\end{equation}
+The output stays the same regardless of how the input is transformed. 
+Classification tasks often require invariance. A drone or bird should be recognized as such regardless of its orientation.
+
+A function $f$ is equivariant to SE(3) transformations if:
+\begin{equation}
+f(g \cdot \mathbf{x}) = g \cdot f(\mathbf{x}) \quad \forall g \in \text{SE}(3)
+\label{eq:equivariance}
+\end{equation}
+The output transforms in a predictable way with the input. 
+Equivariance in intermediate layers keeps geometric information. This can be combined into invariant predictions at the final layer.
+
+Since our application will be deployed on edge devices, the trade-off between guaranteed equivariance and computational cost becomes critical. 
+Some approaches provide practical equivariance suitable for real-time inference, whereas full spherical harmonic methods may be too expensive.
+
+\subsection{Permutation Invariance for Set Processing}
+\label{subsec:permutation}
+
+A set of 3D Gaussian primitives that reconstruct a flying object has no inherent order. 
+Whether we list Gaussians from front to back, largest to smallest, or randomly, the underlying object stays the same. 
+Neural networks working on such data must respect this permutation symmetry.
+
+A function $f$ acting on a set $\mathcal{X} = \{x_1, \ldots, x_n\}$ is permutation invariant if:
+\begin{equation}
+f(\{x_{\pi(1)}, \ldots, x_{\pi(n)}\}) = f(\{x_1, \ldots, x_n\})
+\end{equation}
+for any permutation $\pi$. 
+The basic result from DeepSets~\cite{zaheer_deep_2017} states that any permutation-invariant function on finite sets can be decomposed as:
+\begin{equation}
+f(\mathcal{X}) = \rho\left(\sum_{x \in \mathcal{X}} \phi(x)\right)
+\label{eq:deepsets}
+\end{equation}
+where $\phi$ encodes individual elements and $\rho$ processes the aggregated representation. 
+The summation (or equivalently, mean pooling) results in permutation invariance.
+
+These principles translate directly to Gaussian representations. 
+Each Gaussian primitive is a set element. It is parameterized by position $\boldsymbol{\mu}$, scale $\mathbf{s}$, rotation $\mathbf{q}$, opacity $\alpha$, and color coefficients. 
+A permutation invariant encoder can process this set to produce a fixed dimensional representation suitable for classification.
+
+\subsection{State Space Models}
+\label{subsec:ssm}
+
+Transformers achieve remarkable performance across sequence modeling tasks. However, they suffer from quadratic complexity that limits scalability to long sequences. 
+State space models (SSMs) offer an alternative with linear complexity. This allows efficient processing of long time windows.
+
+Classical linear time invariant SSMs are defined in continuous time as:
+\begin{align}
+\frac{d\mathbf{h}(t)}{dt} &= \mathbf{A}\mathbf{h}(t) + \mathbf{B}x(t) \label{eq:ssm_continuous_h} \\
+y(t) &= \mathbf{C}\mathbf{h}(t) \label{eq:ssm_continuous_y}
+\end{align}
+where $\mathbf{h}(t) \in \mathbb{R}^{D}$ is the hidden state, $x(t)$ is the input, and $y(t)$ is the output. 
+The matrices $\mathbf{A} \in \mathbb{R}^{D \times D}$, $\mathbf{B} \in \mathbb{R}^{D \times 1}$, and $\mathbf{C} \in \mathbb{R}^{1 \times D}$ control the state dynamics. 
+For discrete sequence processing, these equations are discretized using a step size $\Delta$ to obtain:
+\begin{align}
+\mathbf{h}_k &= \bar{\mathbf{A}}\mathbf{h}_{k-1} + \bar{\mathbf{B}}x_k \\
+y_k &= \mathbf{C}\mathbf{h}_k
+\end{align}
+where $\bar{\mathbf{A}}$ and $\bar{\mathbf{B}}$ are discretized versions of the continuous parameters.
+
+The Mamba architecture~\cite{gu_linear-time_2024} extends this foundation with selective state spaces. 
+Unlike classical SSMs with fixed dynamics, Mamba makes the parameters $\mathbf{B}$, $\mathbf{C}$, and $\Delta$ functions of the input:
+\begin{equation}
+\mathbf{B}_k = \text{Linear}_B(x_k), \quad \mathbf{C}_k = \text{Linear}_C(x_k), \quad \Delta_k = \text{softplus}(\text{Linear}_\Delta(x_k))
+\end{equation}
+This input dependence allows the model to selectively propagate or forget information based on content. It combines the efficiency of SSMs with the context awareness of attention mechanisms.
+
+The computational advantage is substantial. 
+While Transformer self-attention requires $O(N^2)$ operations for a sequence of length $N$, Mamba achieves $O(N)$ complexity through its recurrent formulation. 
+For temporal classification of Gaussian sequences, we may process dozens of frames each containing hundreds of primitives. In this case, linear scaling could enable real-time operation that would be challenging with quadratic methods.
+
+\subsection{Connection to Thesis Architecture.}
+The primitives introduced in this section form the computational foundation of the 4D classifier developed in Chapter \todo{ref chapter}. 
+Reconstructed Gaussians serve as input tokens processed by a permutation-invariant encoder. 
+SE(3) equivariant layers ensure classification remains consistent regardless of object orientation. 
+Temporal modeling, whether through Transformer attention or Mamba's selective SSM, captures the dynamic signatures that distinguish drone flight patterns from bird locomotion. 
+The efficiency of state space models proves particularly valuable for deployment on edge computing hardware. Here, the target latency of under 500 milliseconds limits architectural choices.
+
+\begin{table}[h]
+\centering
+\caption{Comparison of sequence modeling approaches for temporal classification.}
+\label{tab:sequence-models}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{Complexity} & \textbf{Context-Awareness} & \textbf{Edge Suitability} \\
+\midrule
+LSTM & $O(N)$ & Limited & Yes \\
+Transformer & $O(N^2)$ & Global & Limited \\
+Mamba & $O(N)$ & Selective & Yes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
