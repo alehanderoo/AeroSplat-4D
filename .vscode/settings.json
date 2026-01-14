@@ -33,14 +33,6 @@
         "%DOCFILE%"
       ],
       "env": {}
-    },
-    {
-      "name": "upload_to_drive",
-      "command": "/home/sandro/thesis/thesis_report/.venv/bin/python3",
-      "args": [
-        "/home/sandro/thesis/thesis_report/scripts/upload_to_drive.py"
-      ],
-      "env": {}
     }
   ],
   "latex-workshop.latex.recipes": [
@@ -49,15 +41,8 @@
       "tools": [
         "latexmk"
       ]
-    },
-    {
-      "name": "latexmk with upload",
-      "tools": [
-        "latexmk",
-        "upload_to_drive"
-      ]
     }
   ],
-  "latex-workshop.latex.recipe.default": "latexmk with upload",
+  "latex-workshop.latex.recipe.default": "latexmk",
   "latex-workshop.view.pdf.viewer": "tab"
 }

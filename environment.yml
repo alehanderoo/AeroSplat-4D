@@ -1,4 +1,4 @@
-name: depthsplat
+name: aeroSplat
 channels:
   - pytorch
   - conda-forge
@@ -18,3 +18,18 @@ dependencies:
       # Exact PyTorch stack (CUDA 12.8 wheels)
       - torch==2.9.0
       - torchvision==0.24.0
+
+      # objaverse render dependencies
+      - requests
+      - pandas
+      - pyarrow
+      - tqdm
+      - loguru
+      - fsspec>=2022.11.0
+      - gputil==1.4.0
+      - fire
+      - setuptools
+      - pillow>=12.0.0
+      - matplotlib>=3.10.8
+      - opencv-python>=4.12.0.88
+      - ipykernel

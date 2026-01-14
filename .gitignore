@@ -2,4 +2,4 @@ renders
 renders/*
 
 report/paper/build/*
-!report/paper/build/xx.pdf
+!report/paper/build/*.pdf
