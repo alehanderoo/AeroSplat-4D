@@ -187,7 +187,7 @@ each parameterized by:
     \item \textbf{Position} $\boldsymbol{\mu} \in \mathbb{R}^3$: The mean location in 3D space.
     \item \textbf{Covariance} $\boldsymbol{\Sigma} \in \mathbb{R}^{3\times3}$: Decomposed into scale $\mathbf{s} \in \mathbb{R}^3$ and rotation quaternion $\mathbf{q} \in \mathbb{R}^4$ as $\boldsymbol{\Sigma} = \mathbf{R}\mathbf{S}\mathbf{S}^T\mathbf{R}^T$ where $\mathbf{R} = \mathbf{R}(\mathbf{q})$ and $\mathbf{S} = \text{diag}(\mathbf{s})$.
     \item \textbf{Opacity} $\alpha \in [0,1]$: The transparency of the primitive.
-    \item \textbf{Spherical Harmonics} $\mathbf{c} \in \mathbb{R}^{48}$: View-dependent color encoded as coefficients up to degree 3 (16 coefficients per RGB channel).
+    \item \textbf{Spherical Harmonics} $\mathbf{c} \in \mathbb{R}^{48}$: View-dependent color encoded as coefficients up to degree 2 (16 coefficients per RGB channel).
 \end{itemize}
 
 These explicit primitives encode rich geometric and appearance information that forms the basis for subsequent classification.
