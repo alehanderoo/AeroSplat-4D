@@ -1,0 +1,79 @@
+# Full configuration for production training
+# ==========================================
+
+# Model configuration
+model:
+  # Stage 1: VN-Transformer Spatial Encoder
+  spatial_dim: 128
+  spatial_depth: 4
+  spatial_heads: 8
+  spatial_dim_feat: 64
+  spatial_output_dim: 256
+  spatial_bias_epsilon: 1.0e-6
+
+  # Stage 2: Mamba Temporal Encoder
+  temporal_hidden_dim: 256
+  temporal_num_layers: 4
+  temporal_d_state: 16
+  temporal_bidirectional: false
+  temporal_aggregation: attention  # 'mean', 'last', 'max', 'attention'
+
+  # Classification Head
+  num_classes: 1
+  dropout: 0.1
+  use_eigenvectors: true
+
+# Data configuration
+data:
+  sequence_length: 30
+  stride: 1
+  max_gaussians: 50000
+  subsample_strategy: fps  # 'random', 'fps', 'grid', 'importance'
+
+  batch_size: 8
+  num_workers: 4
+  cache_sequences: false
+
+  # Augmentation
+  augmentation:
+    enabled: true
+    temporal_reverse_prob: 0.5
+    spatial_rotation_prob: 0.5
+    spatial_jitter_std: 0.01
+    gaussian_dropout_prob: 0.1
+
+# Training configuration
+training:
+  epochs: 100
+  learning_rate: 1.0e-4
+  min_lr: 1.0e-6
+  weight_decay: 1.0e-5
+  betas: [0.9, 0.999]
+  grad_clip: 1.0
+
+  # Loss
+  loss_type: focal  # 'bce', 'focal'
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  label_smoothing: 0.1
+
+  # Scheduler
+  scheduler: onecycle  # 'onecycle', 'cosine'
+
+  # Checkpointing
+  save_every: 10
+  patience: 20  # Early stopping patience (0 = disabled)
+
+# Hardware
+device: cuda
+seed: 42
+mixed_precision: true
+
+# Logging
+logging:
+  level: INFO
+  log_every: 100  # Log every N batches
+  wandb:
+    enabled: false
+    project: gaussian-4d-classify
+    entity: null

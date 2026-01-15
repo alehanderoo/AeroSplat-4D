@@ -1,0 +1,48 @@
+# Lightweight configuration for faster training/debugging
+# ======================================================
+
+# Model configuration (smaller)
+model:
+  spatial_dim: 64
+  spatial_depth: 2
+  spatial_heads: 4
+  spatial_dim_feat: 32
+  spatial_output_dim: 128
+
+  temporal_hidden_dim: 128
+  temporal_num_layers: 2
+  temporal_d_state: 8
+  temporal_bidirectional: false
+
+  num_classes: 1
+  dropout: 0.1
+  use_eigenvectors: false  # Faster without eigenvectors
+
+# Data configuration
+data:
+  sequence_length: 15       # Fewer frames
+  stride: 2                 # Skip frames
+  max_gaussians: 10000      # Fewer Gaussians
+  subsample_strategy: random
+
+  batch_size: 4
+  num_workers: 2
+  cache_sequences: true     # Cache for faster iteration
+
+# Training configuration
+training:
+  epochs: 50
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-5
+  grad_clip: 1.0
+
+  loss_type: bce            # Simpler loss
+  label_smoothing: 0.0
+
+  scheduler: cosine
+  save_every: 5
+  patience: 10
+
+# Hardware
+device: cuda
+seed: 42

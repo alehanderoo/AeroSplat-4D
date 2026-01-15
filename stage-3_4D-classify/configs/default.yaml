@@ -1,0 +1,73 @@
+# Default configuration for 4D Gaussian Classifier
+# ================================================
+
+# Model configuration
+model:
+  # Stage 1: Spatial encoder (VN-Transformer)
+  spatial_dim: 128          # VN-Transformer hidden dimension
+  spatial_depth: 4          # Number of VN-Transformer layers
+  spatial_heads: 8          # Attention heads
+  spatial_dim_feat: 64      # Scalar feature dimension
+  spatial_output_dim: 256   # Frame embedding dimension
+  spatial_bias_epsilon: 1.0e-6  # ε-approximate equivariance
+
+  # Stage 2: Temporal encoder (Mamba)
+  temporal_hidden_dim: 256  # Mamba hidden dimension
+  temporal_num_layers: 4    # Number of Mamba blocks
+  temporal_d_state: 16      # SSM state dimension
+  temporal_bidirectional: false  # Bidirectional processing
+
+  # Classification
+  num_classes: 1            # Binary classification
+  dropout: 0.1
+
+  # Features
+  use_eigenvectors: true    # Use covariance eigenvectors
+
+# Data configuration
+data:
+  train_root: data/train
+  val_root: data/val
+  test_root: data/test
+  labels_file: data/labels.json
+
+  sequence_length: 30       # Frames per sample
+  stride: 1                 # Frame sampling stride
+  max_gaussians: 50000      # Max Gaussians per frame
+  subsample_strategy: random  # random, fps, grid, importance
+
+  batch_size: 8
+  num_workers: 4
+  cache_sequences: false
+
+# Training configuration
+training:
+  epochs: 100
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-5
+  grad_clip: 1.0
+
+  loss_type: focal          # bce, focal
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  label_smoothing: 0.0
+
+  scheduler: onecycle       # onecycle, cosine
+  save_every: 10
+
+  # Early stopping
+  patience: 20
+  min_delta: 0.001
+
+# Hardware
+device: cuda
+seed: 42
+deterministic: true
+
+# Logging
+logging:
+  level: INFO
+  wandb:
+    enabled: false
+    project: gaussian4d-classifier
+    entity: null
