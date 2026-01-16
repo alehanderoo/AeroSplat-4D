@@ -23,8 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFERENCE_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Default paths
-# DEFAULT_RENDER_DIR="/home/sandro/thesis/renders/5cams_08-01-26_drone_50m"
-DEFAULT_RENDER_DIR="/home/sandro/thesis/renders/5cams_10-01-26"
+DEFAULT_RENDER_DIR="/home/sandro/aeroSplat-4D/renders/5cams_bird_10m"
 DEFAULT_PORT=8554
 DEFAULT_FPS=30
 

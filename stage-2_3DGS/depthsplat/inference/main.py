@@ -270,7 +270,9 @@ Examples:
             # Detection service settings
             detection_enabled=detection_config.get('enabled', True),
             detection_gt_path=detection_config.get('gt_path'),
-            crop_size=detection_config.get('crop_size', 256),
+            min_crop_size=detection_config.get('min_crop_size', 64),
+            target_object_coverage=detection_config.get('target_object_coverage', 0.75),
+            crop_margin=detection_config.get('crop_margin', 0.15),
             # GT depth visualization settings
             gt_depth_base_path=gt_depth_config.get('base_path') if gt_depth_config.get('enabled', True) else None,
             depth_near=gt_depth_config.get('depth_near', 0.5),

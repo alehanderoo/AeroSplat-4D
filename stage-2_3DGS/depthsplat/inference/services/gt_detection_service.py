@@ -133,6 +133,10 @@ class GroundTruthDetectionService(DetectionService):
                         bbox_data.get("y_max", 0),
                     )
 
+                # Construct mask path
+                # {render_dir}/{cam_name}/mask/drone_mask_{frame_id:04d}.png
+                mask_path = self.json_path.parent / cam_name / "mask" / f"drone_mask_{frame_id:04d}.png"
+                
                 detection = Detection(
                     center_2d=tuple(center_2d),
                     visible=visible,
@@ -140,6 +144,7 @@ class GroundTruthDetectionService(DetectionService):
                     bbox=bbox,
                     depth=depth,
                     object_id="drone",
+                    mask_path=str(mask_path) if mask_path.exists() else None,
                 )
 
                 detections[cam_name] = [detection]

@@ -1,3 +1,10 @@
+# Installation
+export TORCH_CUDA_ARCH_LIST="9.0"
+conda env create -f environment.yml
+conda activate aeroSplat
+
+
+
 # TODO
 
 ## isaacsim simulation

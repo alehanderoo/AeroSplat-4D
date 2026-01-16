@@ -14,7 +14,7 @@
 #   ./scripts/start_visualization.sh --help    # Show options
 #
 # Prerequisites:
-#   - Conda environment 'depthsplat' activated
+#   - Conda environment 'aeroSplat' activated
 #   - RTSP streams running (in dev mode, use start_rtsp_simulator.sh)
 # =============================================================================
 

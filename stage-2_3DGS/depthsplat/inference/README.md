@@ -159,6 +159,47 @@ conda activate depthsplat
 
 ---
 
+## Camera Calibration & Transformations
+
+The `CameraCalibrationService` applies critical transformations to camera parameters to match the model's training data distribution:
+
+### Transformations Applied
+
+1. **OpenGL→OpenCV Coordinate Flip**
+   - Isaac Sim uses OpenGL convention (+Y up, +Z toward viewer)
+   - Model expects OpenCV convention (+Y down, +Z forward)
+   - Applies `diag([1, -1, -1])` rotation to camera extrinsics
+
+2. **Pose Normalization**
+   - Centers cameras at the tracked object position
+   - Scales camera distances to target radius (2.0m)
+   - Matches the training data distribution from Objaverse
+
+3. **Training-Matched Intrinsics**
+   - Overrides camera intrinsics with `fx_norm=1.0723` (50° FOV)
+   - Model was trained on 50° FOV images
+   - Real telephoto cameras may have very different FOV after cropping
+
+### Configuration
+
+These transformations are enabled by default in `CameraCalibrationService`:
+
+```python
+CameraCalibrationService(
+    json_path=json_path,
+    apply_coordinate_flip=True,      # OpenGL→OpenCV
+    apply_pose_normalization=True,   # Center + scale
+    use_training_intrinsics=True,    # fx=1.0723
+    target_radius=2.0,               # Scale to 2.0m
+)
+```
+
+### Object Position
+
+The detection service provides the 3D object position (`object_position_3d`) which is used as the center for pose normalization. This ensures cameras are properly centered around the tracked object each frame.
+
+---
+
 ## Architecture
 
 ```

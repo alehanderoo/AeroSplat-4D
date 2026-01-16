@@ -485,10 +485,10 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
         )
 
         # Connect the load wild frame button
-        RENDER_DIR = "/home/sandro/thesis/renders/5cams_bird_10m"
+        # RENDER_DIR = "/home/sandro/thesis/renders/5cams_bird_10m"
         # RENDER_DIR = "/home/sandro/thesis/renders/5cams_drone_10m"
         # RENDER_DIR = "/home/sandro/thesis/renders/5cams_bird_50m"
-        # RENDER_DIR = "/home/sandro/thesis/renders/5cams_drone_50m"
+        RENDER_DIR = "/home/sandro/aeroSplat-4D/renders/5cams_drone_50m"
         # RENDER_DIR = "/home/sandro/thesis/renders/5cams_bird_100m"
         # RENDER_DIR = "/home/sandro/thesis/renders/5cams_drone_100m"
 

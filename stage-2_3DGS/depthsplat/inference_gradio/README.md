@@ -20,7 +20,7 @@ The demo will be available at `http://localhost:7860`.
 
 ```bash
 python app.py \
-    --checkpoint /home/sandro/thesis/code/depthsplat/outputs/objaverse_white_small_gauss/checkpoints/epoch_0-step_100000.ckpt \
+    --checkpoint /home/sandro/aeroSplat-4D/stage-2_3DGS/depthsplat/outputs/objaverse_white_small_gauss/checkpoints/epoch_0-step_100000.ckpt \
     --config objaverse_white_small_gauss \
     --port 7860 \
     --share

@@ -70,7 +70,13 @@ class VisualizationPipelineConfig(PipelineConfig):
     # Detection service settings
     detection_enabled: bool = True
     detection_gt_path: Optional[str] = None  # Path to ground truth JSON
-    crop_size: int = 1024  # Size of cropped region (before resize to model input)
+    # crop_size is now dynamic (minimum size), not fixed
+    min_crop_size: int = 64  # Minimum crop size in pixels
+    
+    # Tight cropping settings (matching Gradio demo)
+    # The model was trained/demoed with objects filling ~75% of the frame
+    target_object_coverage: float = 0.75  
+    crop_margin: float = 0.15
 
     # Camera calibration settings
     calibration_json_path: Optional[str] = None  # Path to calibration JSON (defaults to detection_gt_path)
@@ -177,10 +183,18 @@ class VisualizationPipeline(DepthSplatPipeline):
                 self.calibration_service = CameraCalibrationService(
                     json_path=json_path,
                     camera_names=[f"cam_{i+1:02d}" for i in range(self.config.num_cameras)],
+                    # Enable all camera transformations matching the working Gradio demo
+                    apply_coordinate_flip=True,      # OpenGL→OpenCV transformation
+                    apply_pose_normalization=True,   # Center + scale cameras
+                    use_training_intrinsics=True,    # Use fx=1.0723 (50° FOV)
+                    target_radius=2.0,               # Scale to 2.0m from object
                 )
                 logger.info(f"Camera calibration service initialized from: {json_path}")
+                logger.info("Camera transformations enabled: coordinate_flip=True, pose_norm=True, training_intrinsics=True")
             except Exception as e:
                 logger.warning(f"Failed to initialize calibration service: {e}")
+                import traceback
+                traceback.print_exc()
                 self.calibration_service = None
         else:
             logger.info("No calibration JSON path configured - using dummy intrinsics/extrinsics")
@@ -233,12 +247,17 @@ class VisualizationPipeline(DepthSplatPipeline):
         finally:
             self._vis_loop.close()
 
-    def _run_inference_with_gaussians(self, input_tensor):
+    def _run_inference_with_gaussians(self, input_tensor, detections=None):
         """
         Run model inference and return both GaussianOutput and Gaussians dataclass.
 
         This avoids running the encoder twice per frame.
         Also extracts depth and silhouette visualizations.
+
+        Args:
+            input_tensor: Preprocessed input tensor [B, V, C, H, W]
+            detections: Optional FrameDetections from detection service.
+                       If provided, uses the object_position_3d for pose normalization.
         """
         import torch
         import torch.nn.functional as F
@@ -251,6 +270,16 @@ class VisualizationPipeline(DepthSplatPipeline):
             try:
                 b, v, c, h, w = input_tensor.shape
 
+                # --- Update object position for pose normalization ---
+                # This is CRITICAL: The calibration service needs the object position
+                # to center the cameras correctly for pose normalization
+                if self.calibration_service is not None and detections is not None:
+                    object_pos = detections.object_position_3d
+                    if object_pos is not None:
+                        self.calibration_service.set_object_position(
+                            np.array(object_pos, dtype=np.float32)
+                        )
+
                 # Get camera parameters from calibration service or use defaults
                 # With virtual camera transformation, both intrinsics and extrinsics
                 # are adjusted to account for the crop offset, preserving multi-view geometry
@@ -258,12 +287,12 @@ class VisualizationPipeline(DepthSplatPipeline):
                     intrinsics = self.calibration_service.get_intrinsics_tensor(
                         device=self.device,
                         crop_regions=self._last_crop_regions,
-                        use_virtual_camera=True,
+                        use_virtual_camera=False,
                     )
                     extrinsics = self.calibration_service.get_extrinsics_tensor(
                         device=self.device,
                         crop_regions=self._last_crop_regions,
-                        use_virtual_camera=True,
+                        use_virtual_camera=False,
                     )
 
                     # Log intrinsics for debugging (first camera only)
@@ -519,7 +548,8 @@ class VisualizationPipeline(DepthSplatPipeline):
             List of cropped images (one per camera), same order as input frames.
         """
         cropped_views = []
-        crop_size = self.vis_config.crop_size
+        # No longer using fixed crop_size from config
+        # crop_size = self.vis_config.crop_size
 
         for i, frame in enumerate(frames):
             if frame is None:
@@ -535,15 +565,33 @@ class VisualizationPipeline(DepthSplatPipeline):
                 detection = detections.get_detection(camera_name)
 
             if detection is not None and detection.visible:
-                # Use detection coordinates for cropping
+                # Calculate dynamic crop size based on bbox size
+                bbox = detection.bbox
+                if bbox:
+                    bbox_width = bbox[2] - bbox[0]
+                    bbox_height = bbox[3] - bbox[1]
+                    bbox_size = max(bbox_width, bbox_height)
+                else:
+                    bbox_size = 68.0  # Default fallback
+                
+                # Tight crop calculation:
+                # crop_size = bbox_size / TARGET_OBJECT_COVERAGE
+                # This ensures the object fills approx target_coverage of the final frame
+                tight_crop_size = int(bbox_size / self.vis_config.target_object_coverage * (1 + self.vis_config.crop_margin))
+                
+                # Ensure minimum size for quality
+                crop_size = max(tight_crop_size, self.vis_config.min_crop_size)
+                
+                # Use detection coordinates for cropping with dynamic size
                 x1, y1, x2, y2 = detection.get_crop_region(
                     crop_size=crop_size,
                     image_width=w,
                     image_height=h,
-                    use_bbox=True  # Use bbox if available for better sizing
+                    use_bbox=False  # We already used bbox for size calculation
                 )
             else:
-                # Fall back to center crop
+                # Fall back to center crop with reasonable default
+                crop_size = max(w // 4, self.vis_config.min_crop_size)
                 size = min(h, w, crop_size)
                 x1 = (w - size) // 2
                 y1 = (h - size) // 2
@@ -553,7 +601,22 @@ class VisualizationPipeline(DepthSplatPipeline):
             # Extract crop
             cropped = frame[y1:y2, x1:x2]
 
-            # Resize to standard output size
+            # Apply mask if available (for visualization consistency)
+            if detection and detection.mask_path:
+                try:
+                    mask = cv2.imread(detection.mask_path, cv2.IMREAD_GRAYSCALE)
+                    if mask is not None:
+                        if mask.shape[:2] != (h, w):
+                            mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+                        mask_cropped = mask[y1:y2, x1:x2]
+                        _, fg_mask = cv2.threshold(mask_cropped, 127, 255, cv2.THRESH_BINARY)
+                        white_bg = np.ones_like(cropped) * 255
+                        fg_mask_bool = fg_mask > 0
+                        cropped = np.where(fg_mask_bool[..., None], cropped, white_bg).astype(np.uint8)
+                except Exception as e:
+                    pass
+
+            # Resize to standard output size (for frontend display)
             if cropped.size > 0:
                 cropped = cv2.resize(cropped, (256, 256))
                 cropped_views.append(cropped)
@@ -586,14 +649,13 @@ class VisualizationPipeline(DepthSplatPipeline):
         processed = []
         crop_regions = []  # Track crop regions for intrinsics adjustment
         h, w = self.config.model_input_height, self.config.model_input_width
-        crop_size = self.vis_config.crop_size
         
         for i, frame in enumerate(frames):
             if frame is None:
                 # Create blank frame if capture failed
                 frame_cropped = np.zeros((h, w, 3), dtype=np.uint8)
                 # Use center crop region as fallback
-                crop_regions.append((0, 0, crop_size, crop_size))
+                crop_regions.append((0, 0, self.vis_config.min_crop_size, self.vis_config.min_crop_size))
             else:
                 frame_h, frame_w = frame.shape[:2]
                 camera_name = f"cam_{i+1:02d}"
@@ -604,15 +666,32 @@ class VisualizationPipeline(DepthSplatPipeline):
                     detection = detections.get_detection(camera_name)
                 
                 if detection is not None and detection.visible:
+                    # Calculate dynamic crop size based on bbox size
+                    bbox = detection.bbox
+                    if bbox:
+                        bbox_width = bbox[2] - bbox[0]
+                        bbox_height = bbox[3] - bbox[1]
+                        bbox_size = max(bbox_width, bbox_height)
+                    else:
+                        bbox_size = 68.0  # Default fallback
+                    
+                    # Tight crop calculation:
+                    # crop_size = bbox_size / TARGET_OBJECT_COVERAGE
+                    tight_crop_size = int(bbox_size / self.vis_config.target_object_coverage * (1 + self.vis_config.crop_margin))
+                    
+                    # Ensure minimum size for quality
+                    crop_size = max(tight_crop_size, self.vis_config.min_crop_size)
+                    
                     # Use detection coordinates for cropping
                     x1, y1, x2, y2 = detection.get_crop_region(
                         crop_size=crop_size,
                         image_width=frame_w,
                         image_height=frame_h,
-                        use_bbox=True
+                        use_bbox=False
                     )
                 else:
                     # Fall back to center crop
+                    crop_size = max(frame_w // 4, self.vis_config.min_crop_size)
                     size = min(frame_h, frame_w, crop_size)
                     x1 = (frame_w - size) // 2
                     y1 = (frame_h - size) // 2
@@ -624,6 +703,31 @@ class VisualizationPipeline(DepthSplatPipeline):
                 
                 # Extract crop
                 frame_cropped = frame[y1:y2, x1:x2]
+                
+                # Apply mask if available (Crucial for 3DGS reconstruction!)
+                if detection and detection.mask_path:
+                    try:
+                        mask = cv2.imread(detection.mask_path, cv2.IMREAD_GRAYSCALE)
+                        if mask is not None:
+                            # Resize mask to match full frame if needed
+                            if mask.shape[:2] != (frame_h, frame_w):
+                                mask = cv2.resize(mask, (frame_w, frame_h), interpolation=cv2.INTER_NEAREST)
+                            
+                            # Crop mask
+                            mask_cropped = mask[y1:y2, x1:x2]
+                            
+                            # Apply white background where mask is 0
+                            # Threshold > 127 is foreground
+                            _, fg_mask = cv2.threshold(mask_cropped, 127, 255, cv2.THRESH_BINARY)
+                            
+                            # Create white background
+                            white_bg = np.ones_like(frame_cropped) * 255
+                            
+                            # Combine (broadcast mask to 3 channels)
+                            fg_mask_bool = fg_mask > 0
+                            frame_cropped = np.where(fg_mask_bool[..., None], frame_cropped, white_bg).astype(np.uint8)
+                    except Exception as e:
+                        logger.debug(f"Failed to load/apply mask: {e}")
                 
                 # Resize to model input size
                 if frame_cropped.size > 0:
@@ -690,7 +794,8 @@ class VisualizationPipeline(DepthSplatPipeline):
             input_tensor = self._preprocess_frames_with_detections(frames, detections)
 
             # Run inference and get gaussians for rendering
-            output, self._last_gaussians = self._run_inference_with_gaussians(input_tensor)
+            # Pass detections to provide object position for pose normalization
+            output, self._last_gaussians = self._run_inference_with_gaussians(input_tensor, detections=detections)
 
             # Update stats
             self.frame_count += 1
@@ -740,12 +845,12 @@ class VisualizationPipeline(DepthSplatPipeline):
                     intrinsics = self.calibration_service.get_intrinsics_tensor(
                         device=self.device,
                         crop_regions=self._last_crop_regions,
-                        use_virtual_camera=True,
+                        use_virtual_camera=False,
                     )
                     extrinsics = self.calibration_service.get_extrinsics_tensor(
                         device=self.device,
                         crop_regions=self._last_crop_regions,
-                        use_virtual_camera=True,
+                        use_virtual_camera=False,
                     )
                 else:
                     # Fallback to dummy parameters

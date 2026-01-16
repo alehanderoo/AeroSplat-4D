@@ -33,6 +33,7 @@ class Detection:
     bbox: Optional[Tuple[float, float, float, float]] = None
     depth: Optional[float] = None
     object_id: Optional[str] = None
+    mask_path: Optional[str] = None
 
     @property
     def x(self) -> float:

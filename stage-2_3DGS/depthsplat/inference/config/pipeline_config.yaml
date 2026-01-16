@@ -34,16 +34,16 @@ sources:
   
   # File sources (for testing)
   files:
-    # directory: "/home/sandro/thesis/renders/5cams_08-01-26_drone_50m"
-    directory: "/home/sandro/thesis/renders/5cams_10-01-26"
+    # directory: "/home/sandro/aeroSplat-4D/renders/5cams_08-01-26_drone_50m"
+    directory: "/home/sandro/aeroSplat-4D/renders/5cams_bird_10m"
     pattern: "cam_{cam_id}/rgb/rgb_{frame:04d}.png"
     fps: 30
     loop: true
   
   # Simulator settings (for development)
   simulator:
-    # directory: "/home/sandro/thesis/renders/5cams_08-01-26_drone_50m"
-    directory: "/home/sandro/thesis/renders/5cams_10-01-26"
+    # directory: "/home/sandro/aeroSplat-4D/renders/5cams_08-01-26_drone_50m"
+    directory: "/home/sandro/aeroSplat-4D/renders/5cams_bird_10m"
     host: "0.0.0.0"
     port: 8554
     fps: 30
@@ -55,7 +55,7 @@ sources:
 
 model:
   # PyTorch checkpoint (used for inference)
-  checkpoint_path: "/home/sandro/thesis/code/depthsplat/outputs/objaverse_white_small_gauss/checkpoints/epoch_0-step_100000.ckpt"
+  checkpoint_path: "/home/sandro/aeroSplat-4D/stage-2_3DGS/depthsplat/outputs/objaverse_white_small_gauss/checkpoints/epoch_0-step_100000.ckpt"
   
   # Input specification
   input:
@@ -157,21 +157,18 @@ visualization:
     enabled: true
     # Path to ground truth JSON (Isaac Sim exports)
     # In production, this will be replaced by a track-before-detect service
-    # gt_path: "/home/sandro/thesis/renders/5cams_08-01-26_drone_50m/drone_camera_observations.json"
-    gt_path: "/home/sandro/thesis/renders/5cams_10-01-26/drone_camera_observations.json"
-    # Crop size determines normalized focal length: fx_norm = fx_pixels / crop_size
-    # With fx=1946.6 pixels:
-    #   crop_size=256  -> fx_norm=7.6 (too high, outside training distribution)
-    #   crop_size=1024 -> fx_norm=1.9 (reasonable, closer to training)
-    #   crop_size=1280 -> fx_norm=1.5 (good match to training)
-    # The crop is resized to model input size (256x256) after extraction.
-    crop_size: 1024  # Size of cropped region centered on detected object
+    # gt_path: "/home/sandro/aeroSplat-4D/renders/5cams_08-01-26_drone_50m/drone_camera_observations.json"
+    gt_path: "/home/sandro/aeroSplat-4D/renders/5cams_bird_10m/drone_camera_observations.json"
+    # Tight cropping settings
+    min_crop_size: 64
+    target_object_coverage: 0.75  # Object fills 75% of the crop
+    crop_margin: 0.15
 
   # Ground truth depth visualization
   gt_depth:
     enabled: true
-    # base_path: "/home/sandro/thesis/renders/5cams_08-01-26_drone_50m"
-    base_path: "/home/sandro/thesis/renders/5cams_10-01-26"
+    # base_path: "/home/sandro/aeroSplat-4D/renders/5cams_08-01-26_drone_50m"
+    base_path: "/home/sandro/aeroSplat-4D/renders/5cams_bird_10m"
     depth_near: 0.5  # Near plane for depth colormap (meters)
     depth_far: 100.0  # Far plane for depth colormap (meters)
 

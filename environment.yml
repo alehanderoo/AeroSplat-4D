@@ -7,10 +7,19 @@ channels:
 dependencies:
   - python=3.12
   - pip
-  - numpy<2.*
+  - numpy
   - cmake>=3.26
   - git
   - cuda-toolkit=12.8.*
+  # GStreamer RTSP dependencies
+  - gstreamer
+  - gst-plugins-base
+  - gst-plugins-good
+  - gst-plugins-bad
+  - gst-plugins-ugly
+  - gst-libav
+  - gst-python
+  - pygobject
   - pip:
       # Make PyTorch wheels available
       - --extra-index-url https://download.pytorch.org/whl/cu128
@@ -29,7 +38,29 @@ dependencies:
       - gputil==1.4.0
       - fire
       - setuptools
-      - pillow>=12.0.0
+      - pillow>=11.3.0
       - matplotlib>=3.10.8
       - opencv-python>=4.12.0.88
       - ipykernel
+      - prometheus-client
+      - hydra-core
+      # inference dependencies
+      - pytorch-lightning
+      - jaxtyping
+      - dacite
+      - scikit-image
+      - scipy==1.16.3
+      - sk-video
+      - e3nn
+      - lpips
+      - wandb
+      - colorspacious
+      - moviepy==1.0.3
+      - plyfile
+      - ./stage-2_3DGS/depthsplat/diff-gaussian-rasterization-modified
+      # depthsplat misc
+      - beartype
+      - colorama
+      - einops
+      - tabulate
+      - xformers

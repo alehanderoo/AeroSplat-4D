@@ -10,6 +10,9 @@ Key features:
   of the original image, computes a "virtual camera" with adjusted extrinsics
   that maintains correct multi-view geometry.
 - Proper intrinsics normalization for crops with principal point centering.
+- OpenGL→OpenCV coordinate transformation for Isaac Sim cameras.
+- Pose normalization (centering at object + scaling to target radius).
+- Training-matched intrinsics override for better generalization.
 """
 
 import json
@@ -26,6 +29,113 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+# Training-matched intrinsics constant
+# The model was trained on Objaverse with fx_norm=1.0723 (50° FOV)
+# Wild frames have different FOV due to cropping from high-res cameras
+# Using training-matched intrinsics improves generalization
+TRAINING_FX_NORM = 1.0723
+
+# Target radius for pose normalization (meters)
+# The model expects cameras at ~2.0 meters from the object
+TARGET_POSE_RADIUS = 2.0
+
+# OpenGL to OpenCV coordinate transformation matrix
+# OpenGL: +X right, +Y up, +Z toward viewer (out of screen)
+# OpenCV: +X right, +Y down, +Z forward (into screen)
+# Transformation: flip Y and Z axes
+OPENGL_TO_OPENCV_FLIP = np.diag([1.0, -1.0, -1.0]).astype(np.float32)
+
+
+def apply_coordinate_flip(extrinsics: np.ndarray) -> np.ndarray:
+    """
+    Apply OpenGL→OpenCV coordinate transformation to camera extrinsics.
+
+    Isaac Sim (and many 3D tools) use OpenGL convention where:
+    - +X is right
+    - +Y is up
+    - +Z is toward the viewer (out of screen)
+
+    The model expects OpenCV convention where:
+    - +X is right
+    - +Y is down
+    - +Z is forward (into screen)
+
+    Args:
+        extrinsics: [4, 4] or [N, 4, 4] camera-to-world matrix
+
+    Returns:
+        Transformed camera-to-world matrix with OpenCV convention
+    """
+    if extrinsics.ndim == 2:
+        result = extrinsics.copy()
+        result[:3, :3] = extrinsics[:3, :3] @ OPENGL_TO_OPENCV_FLIP
+        return result
+    else:
+        result = extrinsics.copy()
+        for i in range(len(result)):
+            result[i, :3, :3] = extrinsics[i, :3, :3] @ OPENGL_TO_OPENCV_FLIP
+        return result
+
+
+def normalize_camera_poses(
+    extrinsics_list: list,
+    center: np.ndarray = None,
+    target_radius: float = TARGET_POSE_RADIUS,
+) -> tuple:
+    """
+    Normalize camera poses by centering and scaling.
+
+    The model was trained with cameras centered around the object at a
+    specific distance (~2.0m). This function transforms arbitrary camera
+    poses to match the training distribution.
+
+    Args:
+        extrinsics_list: List of [4, 4] camera-to-world matrices
+        center: Center point for normalization. If None, uses mean camera position.
+        target_radius: Target distance from center (default: 2.0m)
+
+    Returns:
+        Tuple of (normalized_extrinsics_list, scale_factor, center)
+    """
+    if len(extrinsics_list) == 0:
+        return [], 1.0, np.zeros(3)
+
+    # Copy to avoid modifying originals
+    result = [ext.copy() for ext in extrinsics_list]
+
+    # Get camera positions
+    positions = np.array([ext[:3, 3] for ext in result])
+
+    # Determine center
+    if center is None:
+        # Use centroid of camera positions as default
+        # This works when cameras are arranged around the object
+        center = positions.mean(axis=0)
+        logger.info(f"Pose normalization: Using camera centroid as center: {center}")
+    else:
+        logger.info(f"Pose normalization: Using provided center: {center}")
+
+    # Center the cameras
+    for ext in result:
+        ext[:3, 3] -= center
+
+    # Calculate current mean distance from center
+    distances = np.array([np.linalg.norm(ext[:3, 3]) for ext in result])
+    mean_dist = np.mean(distances)
+
+    if mean_dist < 1e-6:
+        logger.warning("Mean distance is near zero, skipping scaling")
+        return result, 1.0, center
+
+    # Scale to target radius
+    scale_factor = target_radius / mean_dist
+    logger.info(f"Pose normalization: Scaling by {scale_factor:.4f} (dist: {mean_dist:.2f} -> {target_radius:.1f})")
+
+    for ext in result:
+        ext[:3, 3] *= scale_factor
+
+    return result, scale_factor, center
 
 
 def compute_crop_rotation(
@@ -103,12 +213,21 @@ class CameraCalibrationService:
     The encoder expects:
     - Intrinsics: Normalized to [0,1] range (fx/width, cx/width, etc.)
     - Extrinsics: Camera-to-world 4x4 matrices
+
+    Key transformations (matching the working Gradio demo):
+    - OpenGL→OpenCV coordinate flip (Isaac Sim uses OpenGL convention)
+    - Pose normalization (center at object, scale to target radius)
+    - Optional training-matched intrinsics override
     """
 
     def __init__(
         self,
         json_path: Union[str, Path],
         camera_names: List[str] = None,
+        apply_coordinate_flip: bool = True,
+        apply_pose_normalization: bool = True,
+        use_training_intrinsics: bool = True,
+        target_radius: float = TARGET_POSE_RADIUS,
     ):
         """
         Initialize the camera calibration service.
@@ -116,9 +235,25 @@ class CameraCalibrationService:
         Args:
             json_path: Path to the drone_camera_observations.json file
             camera_names: List of camera names to use (auto-detected if None)
+            apply_coordinate_flip: Apply OpenGL→OpenCV transformation (default True)
+            apply_pose_normalization: Center and scale camera poses (default True)
+            use_training_intrinsics: Override with training-matched intrinsics (default True)
+            target_radius: Target distance from center for pose normalization (default 2.0)
         """
         self.json_path = Path(json_path)
-        
+
+        # Configuration flags
+        self._apply_coordinate_flip = apply_coordinate_flip
+        self._apply_pose_normalization = apply_pose_normalization
+        self._use_training_intrinsics = use_training_intrinsics
+        self._target_radius = target_radius
+
+        # Normalization state (computed lazily)
+        self._pose_center: Optional[np.ndarray] = None
+        self._pose_scale: float = 1.0
+        self._object_position: Optional[np.ndarray] = None
+        self._normalized_extrinsics_cache: Optional[Dict[str, np.ndarray]] = None
+
         # Load and parse JSON
         self._data = self._load_json()
         self._cameras_data: List[Dict] = self._data.get("cameras", [])
@@ -408,6 +543,31 @@ class CameraCalibrationService:
         if not TORCH_AVAILABLE:
             raise ImportError("PyTorch not available")
 
+        # --- Use training-matched intrinsics if enabled ---
+        # This is CRITICAL: The model was trained on 50° FOV images (fx_norm=1.0723)
+        # Real cameras may have very different FOV due to cropping from telephoto lenses
+        # Using training-matched intrinsics keeps input in-distribution
+        if self._use_training_intrinsics:
+            training_intrinsics = np.array([
+                [TRAINING_FX_NORM, 0, 0.5],
+                [0, TRAINING_FX_NORM, 0.5],
+                [0, 0, 1],
+            ], dtype=np.float32)
+
+            logger.info(f"Using training-matched intrinsics: fx_norm={TRAINING_FX_NORM:.4f}, cx=cy=0.5")
+
+            # Stack same intrinsics for all cameras
+            intrinsics = np.stack([training_intrinsics.copy() for _ in self.camera_names], axis=0)
+
+            # Convert to tensor and add batch dim: [1, V, 3, 3]
+            tensor = torch.from_numpy(intrinsics).unsqueeze(0)
+
+            if device is not None:
+                tensor = tensor.to(device)
+
+            return tensor
+
+        # --- Otherwise compute actual intrinsics (legacy behavior) ---
         intrinsics_list = []
 
         for i, cam_name in enumerate(self.camera_names):
@@ -494,6 +654,21 @@ class CameraCalibrationService:
 
             extrinsics_list.append(ext)
 
+        # --- Apply coordinate system transformation (OpenGL → OpenCV) ---
+        # This is CRITICAL: Isaac Sim uses OpenGL convention, model expects OpenCV
+        if self._apply_coordinate_flip:
+            logger.debug("Applying OpenGL→OpenCV coordinate flip to extrinsics")
+            extrinsics_list = [apply_coordinate_flip(ext) for ext in extrinsics_list]
+
+        # --- Apply pose normalization (centering + scaling) ---
+        # This is CRITICAL: Model was trained with cameras at ~2.0m from object
+        if self._apply_pose_normalization:
+            extrinsics_list, self._pose_scale, self._pose_center = normalize_camera_poses(
+                extrinsics_list,
+                center=self._object_position,
+                target_radius=self._target_radius,
+            )
+
         # Stack: [V, 4, 4]
         extrinsics = np.stack(extrinsics_list, axis=0)
 
@@ -514,3 +689,52 @@ class CameraCalibrationService:
     def metadata(self) -> Dict:
         """Raw metadata from the JSON file."""
         return self._data.get("metadata", {})
+
+    def set_object_position(self, position: np.ndarray) -> None:
+        """
+        Set the 3D position of the object being tracked.
+
+        This position is used as the center for pose normalization.
+        Should be called with the object position from the detection service
+        before requesting extrinsics tensors.
+
+        Args:
+            position: [3] 3D position of the object in world coordinates
+        """
+        if position is not None:
+            self._object_position = np.array(position, dtype=np.float32)
+            logger.info(f"Object position set to: {self._object_position}")
+            # Clear cached normalized extrinsics since center changed
+            self._normalized_extrinsics_cache = None
+        else:
+            self._object_position = None
+
+    def get_object_position(self) -> Optional[np.ndarray]:
+        """Get the currently set object position."""
+        return self._object_position
+
+    @property
+    def pose_scale(self) -> float:
+        """
+        Get the scale factor applied during pose normalization.
+
+        Returns 1.0 if pose normalization hasn't been applied yet.
+        """
+        return self._pose_scale
+
+    @property
+    def pose_center(self) -> Optional[np.ndarray]:
+        """
+        Get the center point used for pose normalization.
+
+        Returns None if pose normalization hasn't been applied yet.
+        """
+        return self._pose_center
+
+    def reset_normalization(self) -> None:
+        """Reset the normalization state, clearing cached values."""
+        self._pose_center = None
+        self._pose_scale = 1.0
+        self._object_position = None
+        self._normalized_extrinsics_cache = None
+        logger.debug("Normalization state reset")
