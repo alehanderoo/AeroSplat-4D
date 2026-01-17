@@ -116,7 +116,7 @@ render:
   num_cameras: 5
   
   # render base path
-  base_path: "/home/sandro/thesis/renders"
+  base_path: "/home/sandro/aeroSplat-4D/renders"
 
   # Output directory for rendered images (auto-generated if null)
   # Format: {num_cameras}cams_{DD-MM-YY}
@@ -150,7 +150,7 @@ execution:
     load_drone: true
     position_cameras: true
     animate_drone: true
-    render: true
+    render: false
   
   # Enable verbose logging
   verbose: true

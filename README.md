@@ -31,6 +31,7 @@ conda activate aeroSplat
 - make it a docker container / service
 
 ## stage-2_3DGS
+- fix dependency issues in aeroSplat env. it does work in depthsplat env
 - record the .ply models per frame for stage 3
 - fine-tune depth anything model on objects in the air using the objaverse dataset and get metric depth: https://github.com/DepthAnything/Depth-Anything-V2/tree/main/metric_depth
 - compare to : LGM, GRM, TriplaneGaussian, AGG, Splatter Image, Gamba
@@ -46,7 +47,7 @@ conda activate aeroSplat
 
 
 ## stage-3_4D-classify
-- get TODOs from report
+- generate input data for training
 - run the 4D-classify model on the 3DGS output
 - record metrics for inference
     - memory
@@ -54,7 +55,31 @@ conda activate aeroSplat
     - latency
     - inference time
     - bottlenecks for acceleration
+- compare classification results with existing methods:
+    - winner drone vs. bird challenge
+    - yolo models
+    - combine multiple camera view classifications
 - make it a docker container / service
+
+## abliation studies
+- simulation
+    - default / finetuned depth anything model
+    - different weather conditions
+    - different lighting conditions
+    - different object types
+    - different camera setups
+    - objects outside of overlapping view frustum
+- stage-1_fg-seg
+    - compare to other fg-seg methods
+    - 
+- stage-2_3DGS
+    - compare to other 3DGS methods
+    - 
+- stage-3_4D-classify
+    - compare to other 4D-classify methods
+    - compare transformer with mamba (do we need the memory reduction from mamba?)
+
+
 
 ## overall pipeline
 - use deepstream for the data processing pipeline
