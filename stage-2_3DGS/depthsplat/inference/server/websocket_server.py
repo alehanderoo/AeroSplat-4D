@@ -135,6 +135,9 @@ class VisualizationServer:
         self.orbit_angle = 0.0
         self.last_orbit_update = time.time()
 
+        # GT depth enabled state (disabled by default for performance)
+        self.gt_depth_enabled = False
+
         # Frame queue for broadcasting
         self._frame_queue: asyncio.Queue = None
         self._loop: asyncio.AbstractEventLoop = None
@@ -155,6 +158,7 @@ class VisualizationServer:
             await websocket.send(json.dumps({
                 "type": "init",
                 "view_mode": self.view_mode.value,
+                "gt_depth_enabled": self.gt_depth_enabled,
                 "config": {
                     "render_width": self.config.render_width,
                     "render_height": self.config.render_height,
@@ -194,6 +198,16 @@ class VisualizationServer:
                     }))
                 except ValueError:
                     logger.warning(f"Invalid view mode: {mode}")
+
+            elif msg_type == "set_gt_depth":
+                enabled = data.get("enabled", False)
+                self.gt_depth_enabled = enabled
+                logger.info(f"GT depth enabled changed to: {enabled}")
+                # Broadcast state change to all clients
+                await self._broadcast(json.dumps({
+                    "type": "gt_depth_changed",
+                    "enabled": enabled
+                }))
 
             elif msg_type == "ping":
                 await websocket.send(json.dumps({
@@ -262,11 +276,13 @@ class VisualizationServer:
 
         Returns a RenderCamera with extrinsics and intrinsics for rendering.
         """
-        # Default intrinsics if not provided
+        # Default intrinsics - MUST use training-matched fx_norm = 1.0723 (50° FOV)
+        # This matches what the Gradio demo uses and what the model was trained with
+        TRAINING_FX_NORM = 1.0723
         if base_intrinsics is None:
             base_intrinsics = np.array([
-                [1.0, 0.0, 0.5],
-                [0.0, 1.0, 0.5],
+                [TRAINING_FX_NORM, 0.0, 0.5],
+                [0.0, TRAINING_FX_NORM, 0.5],
                 [0.0, 0.0, 1.0]
             ], dtype=np.float32)
 
@@ -284,47 +300,65 @@ class VisualizationServer:
         return RenderCamera(
             extrinsics=extrinsics,
             intrinsics=base_intrinsics,
-            near=0.5,
-            far=5.0
+            near=0.55,  # Match Gradio demo
+            far=2.54,   # Match Gradio demo
         )
 
     def _compute_extrinsics(self) -> np.ndarray:
-        """Compute camera extrinsics based on current view mode."""
-        # Camera looking at origin from distance
-        radius = 1.5
+        """
+        Compute camera extrinsics based on current view mode.
+
+        Uses Z-up coordinate system matching the Gradio demo and DepthSplat training.
+        Camera positions orbit in the XY plane with optional Z elevation.
+        """
+        # Camera distance - must match pose normalization target_radius (2.0)
+        radius = 2.0
+        elevation = 0.3  # Small Z offset for better viewing angle
 
         if self.view_mode == ViewMode.ORBIT:
             angle_rad = np.radians(self.orbit_angle)
+            # XY plane orbit with Z elevation (matching Gradio demo)
             x = radius * np.cos(angle_rad)
-            z = radius * np.sin(angle_rad)
-            y = 0.0
+            y = radius * np.sin(angle_rad)
+            z = elevation
         elif self.view_mode == ViewMode.FRONT:
-            x, y, z = 0.0, 0.0, radius
+            x, y, z = 0.0, -radius, elevation
         elif self.view_mode == ViewMode.TOP:
-            x, y, z = 0.0, radius, 0.01  # Slight offset to avoid singularity
+            x, y, z = 0.0, 0.01, radius  # Looking down from +Z
         elif self.view_mode == ViewMode.SIDE:
-            x, y, z = radius, 0.0, 0.0
+            x, y, z = radius, 0.0, elevation
         else:  # INPUT_MATCH - use first camera position
-            x, y, z = 0.0, 0.0, radius
+            x, y, z = 0.0, -radius, elevation
 
-        # Compute look-at matrix
-        eye = np.array([x, y, z])
-        target = np.array([0.0, 0.0, 0.0])
-        up = np.array([0.0, 1.0, 0.0])
+        # Build camera-to-world matrix matching Gradio demo's create_orbit_extrinsics
+        # Z-up coordinate system, camera looks at origin
 
-        # Camera axes
-        forward = target - eye
+        # Forward vector: from camera position toward origin
+        forward = -np.array([x, y, z], dtype=np.float32)
         forward = forward / np.linalg.norm(forward)
+
+        # Up vector: world Z axis
+        up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+        # Right vector: cross(forward, up)
         right = np.cross(forward, up)
-        right = right / np.linalg.norm(right)
-        actual_up = np.cross(right, forward)
+        norm = np.linalg.norm(right)
+        if norm < 1e-6:
+            # Handle singularity when looking straight up/down
+            right = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        else:
+            right = right / norm
+
+        # Recompute up to be orthogonal
+        up = np.cross(right, forward)
+
+        # Build rotation matrix: [right, up, -forward] as columns
+        R = np.stack([right, up, -forward], axis=1)
 
         # Build 4x4 camera-to-world matrix
         extrinsics = np.eye(4, dtype=np.float32)
-        extrinsics[:3, 0] = right
-        extrinsics[:3, 1] = actual_up
-        extrinsics[:3, 2] = -forward  # OpenCV convention
-        extrinsics[:3, 3] = eye
+        extrinsics[:3, :3] = R
+        extrinsics[:3, 3] = [x, y, z]
 
         return extrinsics
 
@@ -455,7 +489,10 @@ def create_frame_packet(
     import cv2
 
     thumbnail_size = (config.input_thumbnail_width, config.input_thumbnail_height)
-    
+
+    # Track per-column encoding latency
+    column_latency = stats.get("column_latency", {})
+
     def encode_frame_list(frames, convert_bgr=True):
         """Helper to encode a list of frames to base64."""
         result = []
@@ -471,23 +508,43 @@ def create_frame_packet(
                 result.append(None)
         return result
 
+    def timed_encode(frames, convert_bgr=True):
+        """Helper to encode frames and return (result, time_ms)."""
+        t0 = time.perf_counter()
+        result = encode_frame_list(frames, convert_bgr)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        return result, elapsed_ms
+
     # Encode input thumbnails
-    inputs = encode_frame_list(input_frames, convert_bgr=True)
+    inputs, input_encode_ms = timed_encode(input_frames, convert_bgr=True)
+    column_latency["input_ms"] = input_encode_ms
 
     # Encode cropped frames (one per camera)
-    cropped_b64_list = encode_frame_list(cropped_frames, convert_bgr=True)
-    
+    cropped_b64_list, cropped_encode_ms = timed_encode(cropped_frames, convert_bgr=True)
+    # Add encoding time to existing cropped latency (cropping + encoding)
+    column_latency["cropped_ms"] = column_latency.get("cropped_ms", 0) + cropped_encode_ms
+
     # Encode depth and silhouette visualizations (already RGB from colormap)
-    gt_depth_b64 = encode_frame_list(gt_depth_frames, convert_bgr=False)
-    mono_depth_b64 = encode_frame_list(mono_depth_frames, convert_bgr=False)
-    predicted_depth_b64 = encode_frame_list(predicted_depth_frames, convert_bgr=False)
-    silhouette_b64 = encode_frame_list(silhouette_frames, convert_bgr=False)
+    gt_depth_b64, gt_encode_ms = timed_encode(gt_depth_frames, convert_bgr=False)
+    column_latency["gt_depth_ms"] = column_latency.get("gt_depth_ms", 0) + gt_encode_ms
+
+    mono_depth_b64, mono_encode_ms = timed_encode(mono_depth_frames, convert_bgr=False)
+    column_latency["mono_depth_ms"] = column_latency.get("mono_depth_ms", 0) + mono_encode_ms
+
+    predicted_depth_b64, pred_encode_ms = timed_encode(predicted_depth_frames, convert_bgr=False)
+    column_latency["predicted_depth_ms"] = column_latency.get("predicted_depth_ms", 0) + pred_encode_ms
+
+    silhouette_b64, sil_encode_ms = timed_encode(silhouette_frames, convert_bgr=False)
+    column_latency["silhouette_ms"] = column_latency.get("silhouette_ms", 0) + sil_encode_ms
 
     # Encode gaussian render
     render_b64 = None
     if gaussian_render is not None:
         # Assume already RGB
         render_b64 = encode_image_to_base64(gaussian_render, config.jpeg_quality)
+
+    # Update stats with column latency
+    stats["column_latency"] = column_latency
 
     return FramePacket(
         type="frame",

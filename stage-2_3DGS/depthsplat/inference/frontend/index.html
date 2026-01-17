@@ -158,6 +158,14 @@
                 <span class="text-sm font-mono text-yellow-400" id="latency-display">-- ms</span>
             </div>
 
+            <!-- Column Toggles -->
+            <div class="flex items-center space-x-3 border-l border-gray-600 pl-4">
+                <label class="flex items-center space-x-1.5 cursor-pointer">
+                    <input type="checkbox" id="toggle-gt-depth" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800">
+                    <span class="text-sm text-gray-400">GT Depth</span>
+                </label>
+            </div>
+
             <!-- Pause/Resume Button -->
             <button id="pause-btn" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors">
                 Pause
@@ -170,7 +178,10 @@
 
         <!-- Column 1: Input Cameras -->
         <div class="input-column flex flex-col gap-1">
-            <div class="viz-column-header text-gray-300">Input Cameras</div>
+            <div class="viz-column-header text-gray-300 flex items-center justify-between">
+                <span>Input</span>
+                <span class="text-[10px] font-mono text-gray-500" id="latency-input">--</span>
+            </div>
             <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="input-feeds">
                 <!-- Camera feeds will be populated by JavaScript -->
             </div>
@@ -178,15 +189,21 @@
 
         <!-- Column 2: Cropped Views -->
         <div class="viz-column flex flex-col gap-1">
-            <div class="viz-column-header text-gray-300">Cropped Views</div>
+            <div class="viz-column-header text-gray-300 flex items-center justify-between">
+                <span>Cropped</span>
+                <span class="text-[10px] font-mono text-gray-500" id="latency-cropped">--</span>
+            </div>
             <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="cropped-feeds">
                 <!-- Cropped feeds will be populated by JavaScript -->
             </div>
         </div>
 
         <!-- Column 3: Ground Truth Depth -->
-        <div class="viz-column flex flex-col gap-1">
-            <div class="viz-column-header text-blue-300">GT Depth</div>
+        <div class="viz-column flex flex-col gap-1" id="gt-depth-column">
+            <div class="viz-column-header text-blue-300 flex items-center justify-between">
+                <span>GT Depth</span>
+                <span class="text-[10px] font-mono text-blue-400" id="latency-gt-depth">--</span>
+            </div>
             <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="gt-depth-feeds">
                 <!-- GT depth feeds will be populated by JavaScript -->
             </div>
@@ -194,7 +211,10 @@
 
         <!-- Column 4: Monocular Depth -->
         <div class="viz-column flex flex-col gap-1">
-            <div class="viz-column-header text-purple-300">Mono Depth</div>
+            <div class="viz-column-header text-purple-300 flex items-center justify-between">
+                <span>Mono</span>
+                <span class="text-[10px] font-mono text-purple-400" id="latency-mono">--</span>
+            </div>
             <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="mono-depth-feeds">
                 <!-- Mono depth feeds will be populated by JavaScript -->
             </div>
@@ -202,7 +222,10 @@
 
         <!-- Column 5: Predicted Depth -->
         <div class="viz-column flex flex-col gap-1">
-            <div class="viz-column-header text-green-300">Predicted Depth</div>
+            <div class="viz-column-header text-green-300 flex items-center justify-between">
+                <span>Predicted</span>
+                <span class="text-[10px] font-mono text-green-400" id="latency-predicted">--</span>
+            </div>
             <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="predicted-depth-feeds">
                 <!-- Predicted depth feeds will be populated by JavaScript -->
             </div>
@@ -210,7 +233,10 @@
 
         <!-- Column 6: Silhouette -->
         <div class="viz-column flex flex-col gap-1">
-            <div class="viz-column-header text-orange-300">Silhouette</div>
+            <div class="viz-column-header text-orange-300 flex items-center justify-between">
+                <span>Silhouette</span>
+                <span class="text-[10px] font-mono text-orange-400" id="latency-silhouette">--</span>
+            </div>
             <div class="flex-1 flex flex-col gap-1 overflow-y-auto" id="silhouette-feeds">
                 <!-- Silhouette feeds will be populated by JavaScript -->
             </div>

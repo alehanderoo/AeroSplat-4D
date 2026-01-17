@@ -2,7 +2,7 @@
 # DepthSplat Inference Pipeline Configuration
 # =============================================================================
 # Unified configuration for the entire inference pipeline.
-# 
+#
 # Environment variables can be used with the ${VAR_NAME} syntax.
 # Default values can be specified as ${VAR_NAME:default_value}
 
@@ -11,12 +11,20 @@ pipeline:
   version: "1.0.0"
 
 # =============================================================================
+# Render Directory (CHANGE THIS TO SWITCH SIMULATIONS)
+# =============================================================================
+# All paths for frames, masks, detections, and depth are derived from this.
+# Change this single value to use a different Isaac Sim render.
+
+render_dir: &render_dir "/home/sandro/aeroSplat-4D/renders/5cams_bird_10m"
+
+# =============================================================================
 # Source Configuration
 # =============================================================================
 
 sources:
   mode: "rtsp"  # "rtsp", "file", "simulator"
-  
+
   # RTSP sources (production or simulator)
   rtsp:
     urls:
@@ -25,25 +33,24 @@ sources:
       - "rtsp://localhost:8554/cam_03"
       - "rtsp://localhost:8554/cam_04"
       - "rtsp://localhost:8554/cam_05"
-    
+
     # Connection settings
-    latency: 100  # ms
+    # For localhost/simulator: use 0-20ms. For real network: use 100-500ms
+    latency: 0  # ms (0 = minimum latency for localhost simulator)
     protocols: "tcp"  # "tcp", "udp", "http"
     retry_interval: 5  # seconds
     max_retries: -1  # -1 for infinite
-  
+
   # File sources (for testing)
   files:
-    # directory: "/home/sandro/aeroSplat-4D/renders/5cams_08-01-26_drone_50m"
-    directory: "/home/sandro/aeroSplat-4D/renders/5cams_bird_10m"
+    directory: *render_dir
     pattern: "cam_{cam_id}/rgb/rgb_{frame:04d}.png"
     fps: 30
     loop: true
-  
+
   # Simulator settings (for development)
   simulator:
-    # directory: "/home/sandro/aeroSplat-4D/renders/5cams_08-01-26_drone_50m"
-    directory: "/home/sandro/aeroSplat-4D/renders/5cams_bird_10m"
+    directory: *render_dir
     host: "0.0.0.0"
     port: 8554
     fps: 30
@@ -56,7 +63,7 @@ sources:
 model:
   # PyTorch checkpoint (used for inference)
   checkpoint_path: "/home/sandro/aeroSplat-4D/stage-2_3DGS/depthsplat/outputs/objaverse_white_small_gauss/checkpoints/epoch_0-step_100000.ckpt"
-  
+
   # Input specification
   input:
     num_cameras: 5
@@ -64,14 +71,14 @@ model:
     height: 256
     width: 256
     format: "RGB"  # "RGB" or "BGR"
-  
+
   # Preprocessing
   preprocessing:
     resize_mode: "bilinear"
     normalize:
       mean: [0.485, 0.456, 0.406]  # ImageNet
       std: [0.229, 0.224, 0.225]
-  
+
   # Output specification
   output:
     positions: true
@@ -85,7 +92,7 @@ model:
 
 deepstream:
   gpu_id: 0
-  
+
   # Muxer settings (for batch processing)
   muxer:
     batch_size: 5
@@ -95,12 +102,12 @@ deepstream:
     sync_inputs: true
     live_source: true
     nvbuf_memory_type: 0  # NVMM
-  
+
   # Inference settings
   inference:
     config_file: "config/deepstream/nvinfer_config.txt"
     interval: 0  # Process every frame
-    
+
   # Queue settings
   queue:
     max_size_buffers: 2
@@ -155,10 +162,6 @@ visualization:
   # Detection-based cropping settings
   detection:
     enabled: true
-    # Path to ground truth JSON (Isaac Sim exports)
-    # In production, this will be replaced by a track-before-detect service
-    # gt_path: "/home/sandro/aeroSplat-4D/renders/5cams_08-01-26_drone_50m/drone_camera_observations.json"
-    gt_path: "/home/sandro/aeroSplat-4D/renders/5cams_bird_10m/drone_camera_observations.json"
     # Tight cropping settings
     min_crop_size: 64
     target_object_coverage: 0.75  # Object fills 75% of the crop
@@ -167,10 +170,16 @@ visualization:
   # Ground truth depth visualization
   gt_depth:
     enabled: true
-    # base_path: "/home/sandro/aeroSplat-4D/renders/5cams_08-01-26_drone_50m"
-    base_path: "/home/sandro/aeroSplat-4D/renders/5cams_bird_10m"
     depth_near: 0.5  # Near plane for depth colormap (meters)
     depth_far: 100.0  # Far plane for depth colormap (meters)
+
+  # File-based frame source (for development with pre-rendered frames)
+  # When enabled, reads frames directly from disk instead of RTSP streams,
+  # ensuring perfect synchronization with GT detection and mask data.
+  file_source:
+    enabled: true  # Set to true to use file source instead of RTSP
+    num_frames: 120  # Total frames in the render sequence
+    loop: true  # Whether to loop through frames
 
 # =============================================================================
 # Monitoring Configuration
@@ -182,14 +191,14 @@ monitoring:
     enabled: true
     host: "0.0.0.0"
     port: 9090
-    
+
   # Logging
   logging:
     level: "INFO"  # DEBUG, INFO, WARNING, ERROR
     format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     file: null  # Set to path to enable file logging
     use_colors: true
-    
+
   # Performance tracking
   performance:
     log_interval: 100  # frames

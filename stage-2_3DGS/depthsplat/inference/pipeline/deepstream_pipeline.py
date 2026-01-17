@@ -252,13 +252,10 @@ class DepthSplatPipeline:
             # BGR to RGB
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            # Normalize to [0, 1]
+            # Normalize to [0, 1] - NO ImageNet normalization!
+            # The DepthSplat model expects [0, 1] range (same as torchvision.ToTensor())
+            # ImageNet mean/std normalization would corrupt the input distribution
             frame = frame.astype(np.float32) / 255.0
-
-            # ImageNet normalization
-            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-            std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-            frame = (frame - mean) / std
 
             # HWC to CHW
             frame = np.transpose(frame, (2, 0, 1))

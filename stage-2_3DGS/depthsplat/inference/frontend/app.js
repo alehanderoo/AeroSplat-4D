@@ -31,6 +31,7 @@ class DepthSplatViewer {
         this.lastFrameTime = 0;
         this.fpsHistory = [];
         this.viewMode = 'orbit';
+        this.gtDepthEnabled = false;  // GT depth disabled by default for performance
 
         // DOM elements cache
         this.elements = {};
@@ -60,12 +61,14 @@ class DepthSplatViewer {
             inputFeeds: document.getElementById('input-feeds'),
             croppedFeeds: document.getElementById('cropped-feeds'),
             gtDepthFeeds: document.getElementById('gt-depth-feeds'),
+            gtDepthColumn: document.getElementById('gt-depth-column'),
             monoDepthFeeds: document.getElementById('mono-depth-feeds'),
             predictedDepthFeeds: document.getElementById('predicted-depth-feeds'),
             silhouetteFeeds: document.getElementById('silhouette-feeds'),
             gaussianRender: document.getElementById('gaussian-render'),
             renderPlaceholder: document.getElementById('render-placeholder'),
             viewMode: document.getElementById('view-mode'),
+            toggleGtDepth: document.getElementById('toggle-gt-depth'),
             encoderTime: document.getElementById('encoder-time'),
             decoderTime: document.getElementById('decoder-time'),
             gaussianCount: document.getElementById('gaussian-count'),
@@ -73,6 +76,13 @@ class DepthSplatViewer {
             networkLatency: document.getElementById('network-latency'),
             frameId: document.getElementById('frame-id'),
             clientCount: document.getElementById('client-count'),
+            // Per-column latency displays
+            latencyInput: document.getElementById('latency-input'),
+            latencyCropped: document.getElementById('latency-cropped'),
+            latencyGtDepth: document.getElementById('latency-gt-depth'),
+            latencyMono: document.getElementById('latency-mono'),
+            latencyPredicted: document.getElementById('latency-predicted'),
+            latencySilhouette: document.getElementById('latency-silhouette'),
         };
     }
 
@@ -131,6 +141,14 @@ class DepthSplatViewer {
             this.setViewMode(e.target.value);
         });
 
+        // GT Depth toggle
+        this.elements.toggleGtDepth.addEventListener('change', (e) => {
+            this.setGtDepthEnabled(e.target.checked);
+        });
+
+        // Initialize GT depth column visibility
+        this.updateGtDepthVisibility();
+
         // Handle visibility change (pause when hidden)
         document.addEventListener('visibilitychange', () => {
             if (document.hidden && !this.paused) {
@@ -144,6 +162,29 @@ class DepthSplatViewer {
                 this.connect();
             }
         });
+    }
+
+    setGtDepthEnabled(enabled) {
+        this.gtDepthEnabled = enabled;
+        this.updateGtDepthVisibility();
+
+        // Send toggle state to server
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({
+                type: 'set_gt_depth',
+                enabled: enabled
+            }));
+        }
+    }
+
+    updateGtDepthVisibility() {
+        if (this.elements.gtDepthColumn) {
+            this.elements.gtDepthColumn.style.display = this.gtDepthEnabled ? 'flex' : 'none';
+        }
+        // Sync checkbox state
+        if (this.elements.toggleGtDepth) {
+            this.elements.toggleGtDepth.checked = this.gtDepthEnabled;
+        }
     }
 
     connect() {
@@ -223,6 +264,9 @@ class DepthSplatViewer {
             case 'view_mode_changed':
                 this.handleViewModeChanged(data);
                 break;
+            case 'gt_depth_changed':
+                this.handleGtDepthChanged(data);
+                break;
             case 'pong':
                 this.handlePong(data);
                 break;
@@ -251,6 +295,12 @@ class DepthSplatViewer {
         if (data.view_mode) {
             this.viewMode = data.view_mode;
             this.elements.viewMode.value = data.view_mode;
+        }
+
+        // Sync GT depth enabled state
+        if (data.gt_depth_enabled !== undefined) {
+            this.gtDepthEnabled = data.gt_depth_enabled;
+            this.updateGtDepthVisibility();
         }
     }
 
@@ -322,6 +372,11 @@ class DepthSplatViewer {
         this.elements.viewMode.value = data.mode;
     }
 
+    handleGtDepthChanged(data) {
+        this.gtDepthEnabled = data.enabled;
+        this.updateGtDepthVisibility();
+    }
+
     handlePong(data) {
         const rtt = Date.now() - data.timestamp;
         console.log(`Ping RTT: ${rtt}ms`);
@@ -390,6 +445,29 @@ class DepthSplatViewer {
 
         // Network latency
         this.elements.networkLatency.textContent = `${Math.max(0, networkLatency).toFixed(0)} ms`;
+
+        // Per-column latency metrics
+        if (stats.column_latency) {
+            const cl = stats.column_latency;
+            if (cl.input_ms !== undefined && this.elements.latencyInput) {
+                this.elements.latencyInput.textContent = `${cl.input_ms.toFixed(0)}ms`;
+            }
+            if (cl.cropped_ms !== undefined && this.elements.latencyCropped) {
+                this.elements.latencyCropped.textContent = `${cl.cropped_ms.toFixed(0)}ms`;
+            }
+            if (cl.gt_depth_ms !== undefined && this.elements.latencyGtDepth) {
+                this.elements.latencyGtDepth.textContent = `${cl.gt_depth_ms.toFixed(0)}ms`;
+            }
+            if (cl.mono_depth_ms !== undefined && this.elements.latencyMono) {
+                this.elements.latencyMono.textContent = `${cl.mono_depth_ms.toFixed(0)}ms`;
+            }
+            if (cl.predicted_depth_ms !== undefined && this.elements.latencyPredicted) {
+                this.elements.latencyPredicted.textContent = `${cl.predicted_depth_ms.toFixed(0)}ms`;
+            }
+            if (cl.silhouette_ms !== undefined && this.elements.latencySilhouette) {
+                this.elements.latencySilhouette.textContent = `${cl.silhouette_ms.toFixed(0)}ms`;
+            }
+        }
 
         // FPS from server
         if (stats.fps !== undefined) {

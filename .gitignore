@@ -3,3 +3,5 @@ renders/*
 
 report/paper/build/*
 !report/paper/build/*.pdf
+
+assets/*

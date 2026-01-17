@@ -31,6 +31,14 @@ except ImportError:
 
 from .deepstream_pipeline import DepthSplatPipeline, PipelineConfig, GaussianOutput
 
+# Import data_shim from DepthSplat - CRITICAL for proper reconstruction
+try:
+    from src.dataset.data_module import get_data_shim
+    DATA_SHIM_AVAILABLE = True
+except ImportError:
+    DATA_SHIM_AVAILABLE = False
+    get_data_shim = None
+
 # Import server module - handle both package and direct execution
 try:
     from server import (
@@ -86,6 +94,14 @@ class VisualizationPipelineConfig(PipelineConfig):
     depth_near: float = 0.5  # Near plane for depth colormap
     depth_far: float = 100.0  # Far plane for depth colormap
 
+    # File-based frame source settings (for development with pre-rendered frames)
+    # When enabled, reads frames directly from disk instead of RTSP streams,
+    # ensuring perfect synchronization with GT detection data
+    use_file_source: bool = False
+    file_source_dir: Optional[str] = None  # Base directory for rendered frames
+    file_source_num_frames: int = 120  # Total number of frames
+    file_source_loop: bool = True  # Whether to loop through frames
+
     def get_visualization_config(self) -> VisualizationConfig:
         """Convert to VisualizationConfig."""
         return VisualizationConfig(
@@ -136,6 +152,10 @@ class VisualizationPipeline(DepthSplatPipeline):
         # Ground truth depth service
         self.gt_depth_service = None
         self._init_gt_depth_service()
+
+        # File-based frame source (for development with pre-rendered frames)
+        self.file_frame_source = None
+        self._init_file_frame_source()
 
         # Keep raw frames for visualization
         self._last_raw_frames: List[np.ndarray] = []
@@ -216,6 +236,34 @@ class VisualizationPipeline(DepthSplatPipeline):
         else:
             logger.info("No GT depth base path configured - GT depth visualization disabled")
 
+    def _init_file_frame_source(self):
+        """Initialize file-based frame source if configured."""
+        if not self.vis_config.use_file_source:
+            logger.info("File frame source disabled - using RTSP streams")
+            return
+
+        if not self.vis_config.file_source_dir:
+            logger.warning("use_file_source=True but file_source_dir not set")
+            return
+
+        try:
+            from utils.file_frame_source import create_file_frame_source
+            self.file_frame_source = create_file_frame_source(
+                render_dir=self.vis_config.file_source_dir,
+                camera_names=[f"cam_{i+1:02d}" for i in range(self.config.num_cameras)],
+                num_frames=self.vis_config.file_source_num_frames,
+                loop=self.vis_config.file_source_loop,
+            )
+            logger.info(
+                f"File frame source initialized: {self.vis_config.file_source_dir}, "
+                f"{self.vis_config.file_source_num_frames} frames"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize file frame source: {e}")
+            import traceback
+            traceback.print_exc()
+            self.file_frame_source = None
+
     def _load_model(self):
         """Load model with decoder preserved for rendering."""
         # Call parent's model loading
@@ -227,6 +275,92 @@ class VisualizationPipeline(DepthSplatPipeline):
             logger.info("Decoder extracted for visualization rendering")
         else:
             logger.warning("Decoder not found in model - rendering will be disabled")
+
+        # Initialize data_shim - CRITICAL for proper reconstruction
+        # The data_shim handles patch alignment and intrinsics adjustment
+        # This is exactly what the Gradio demo does
+        self.data_shim = None
+        if DATA_SHIM_AVAILABLE and self.model is not None and hasattr(self.model, 'encoder'):
+            try:
+                self.data_shim = get_data_shim(self.model.encoder)
+                logger.info("Data shim initialized from encoder")
+            except Exception as e:
+                logger.warning(f"Failed to initialize data_shim: {e}")
+
+        # Initialize GradioReconstructor - uses the exact same pipeline as the working Gradio demo
+        self.reconstructor = None
+        if self.model is not None and self.decoder is not None and self.data_shim is not None:
+            try:
+                from .reconstruction import GradioReconstructor
+                self.reconstructor = GradioReconstructor(
+                    encoder=self.model.encoder,
+                    decoder=self.decoder,
+                    data_shim=self.data_shim,
+                    device=self.device,
+                    near=0.55,
+                    far=2.54,
+                )
+                logger.info("GradioReconstructor initialized - using exact Gradio demo pipeline")
+            except Exception as e:
+                logger.warning(f"Failed to initialize GradioReconstructor: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            logger.warning("Data shim not available - reconstruction quality may be degraded")
+
+    def build_batch(
+        self,
+        images: "torch.Tensor",
+        extrinsics: "torch.Tensor",
+        intrinsics: "torch.Tensor",
+        near: float = 0.55,
+        far: float = 2.54,
+    ) -> dict:
+        """
+        Build batch dictionary for the encoder (matching Gradio demo structure).
+
+        The data_shim expects a batch with both 'context' and 'target' keys.
+        This structure is required for proper patch alignment.
+
+        Args:
+            images: [1, V, 3, H, W] tensor
+            extrinsics: [1, V, 4, 4] camera-to-world matrices
+            intrinsics: [1, V, 3, 3] normalized intrinsics
+            near: Near plane distance
+            far: Far plane distance
+
+        Returns:
+            Batch dictionary with context and target (matching Gradio demo)
+        """
+        b, v, _, h, w = images.shape
+
+        context = {
+            'image': images,
+            'extrinsics': extrinsics,
+            'intrinsics': intrinsics,
+            'near': torch.full((b, v), near, device=self.device),
+            'far': torch.full((b, v), far, device=self.device),
+            'index': torch.arange(v, device=self.device).unsqueeze(0),
+        }
+
+        # Create a dummy target for the data shim (uses first context view)
+        # This is required by the data_shim - it expects both context and target
+        target = {
+            'image': images[:, :1],
+            'extrinsics': extrinsics[:, :1],
+            'intrinsics': intrinsics[:, :1],
+            'near': torch.full((b, 1), near, device=self.device),
+            'far': torch.full((b, 1), far, device=self.device),
+            'index': torch.zeros(b, 1, dtype=torch.long, device=self.device),
+        }
+
+        batch = {
+            'context': context,
+            'target': target,
+            'scene': ['inference_input'],
+        }
+
+        return batch
 
     def _run_visualization_server(self):
         """Run the WebSocket server in a separate thread."""
@@ -251,8 +385,7 @@ class VisualizationPipeline(DepthSplatPipeline):
         """
         Run model inference and return both GaussianOutput and Gaussians dataclass.
 
-        This avoids running the encoder twice per frame.
-        Also extracts depth and silhouette visualizations.
+        Uses GradioReconstructor when available (exact Gradio demo pipeline).
 
         Args:
             input_tensor: Preprocessed input tensor [B, V, C, H, W]
@@ -263,6 +396,7 @@ class VisualizationPipeline(DepthSplatPipeline):
         import torch.nn.functional as F
         from .deepstream_pipeline import GaussianOutput
         from services import depth_to_colormap
+        from .reconstruction import TRAINING_FX_NORM, TARGET_RADIUS
 
         with torch.no_grad():
             start_time = time.perf_counter()
@@ -273,166 +407,231 @@ class VisualizationPipeline(DepthSplatPipeline):
                 # --- Update object position for pose normalization ---
                 # This is CRITICAL: The calibration service needs the object position
                 # to center the cameras correctly for pose normalization
-                if self.calibration_service is not None and detections is not None:
-                    object_pos = detections.object_position_3d
-                    if object_pos is not None:
-                        self.calibration_service.set_object_position(
-                            np.array(object_pos, dtype=np.float32)
-                        )
+                object_position = None
+                if detections is not None:
+                    object_position = detections.object_position_3d
+                    if object_position is not None:
+                        object_position = np.array(object_position, dtype=np.float32)
+                        if self.calibration_service is not None:
+                            self.calibration_service.set_object_position(object_position)
 
-                # Get camera parameters from calibration service or use defaults
-                # With virtual camera transformation, both intrinsics and extrinsics
-                # are adjusted to account for the crop offset, preserving multi-view geometry
-                if self.calibration_service is not None:
-                    intrinsics = self.calibration_service.get_intrinsics_tensor(
-                        device=self.device,
-                        crop_regions=self._last_crop_regions,
-                        use_virtual_camera=False,
-                    )
-                    extrinsics = self.calibration_service.get_extrinsics_tensor(
-                        device=self.device,
-                        crop_regions=self._last_crop_regions,
-                        use_virtual_camera=False,
-                    )
-
-                    # Log intrinsics for debugging (first camera only)
-                    if self._last_crop_regions:
-                        logger.debug(
-                            f"Virtual camera intrinsics[0]: fx={intrinsics[0,0,0,0]:.3f}, "
-                            f"cx={intrinsics[0,0,0,2]:.3f}, cy={intrinsics[0,0,1,2]:.3f}"
-                        )
-                else:
-                    # Fallback to dummy parameters
-                    intrinsics = torch.eye(3, device=self.device).unsqueeze(0).unsqueeze(0).expand(b, v, 3, 3).clone()
-                    intrinsics[:, :, 0, 0] = 1.0
-                    intrinsics[:, :, 1, 1] = 1.0
-                    intrinsics[:, :, 0, 2] = 0.5
-                    intrinsics[:, :, 1, 2] = 0.5
-
-                    extrinsics = torch.eye(4, device=self.device).unsqueeze(0).unsqueeze(0).expand(b, v, 4, 4).clone()
-                    for i in range(v):
-                        angle = 2 * np.pi * i / v
-                        radius = 1.5
-                        extrinsics[:, i, 0, 3] = radius * np.cos(angle)
-                        extrinsics[:, i, 1, 3] = 0.0
-                        extrinsics[:, i, 2, 3] = radius * np.sin(angle)
-
-                context = {
-                    "image": input_tensor,
-                    "intrinsics": intrinsics,
-                    "extrinsics": extrinsics,
-                    "near": torch.tensor([[0.55]], device=self.device).expand(b, v),
-                    "far": torch.tensor([[2.54]], device=self.device).expand(b, v),
-                }
-
-                # Use visualization_dump to capture intermediate outputs
-                visualization_dump = {}
-                
-                # Run encoder once
-                result = self.model.encoder(
-                    context,
-                    global_step=0,
-                    deterministic=True,
-                    visualization_dump=visualization_dump,
-                )
-
-                inference_time = (time.perf_counter() - start_time) * 1000
-
-                # Handle both dict output (when return_depth=True) and direct Gaussians output
-                if isinstance(result, dict):
-                    gaussians = result.get("gaussians")
-                    # Get depths if available from dict
-                    predicted_depths = result.get("depths")  # [B, V, H, W] if return_depth=True
-                else:
-                    gaussians = result
-                    predicted_depths = None
-                    
-                # Try to get depth from visualization_dump
-                if "depth" in visualization_dump and predicted_depths is None:
-                    predicted_depths = visualization_dump["depth"]  # [B, V, H, W, srf, s]
-                    if predicted_depths.dim() > 4:
-                        predicted_depths = predicted_depths.squeeze(-1).squeeze(-1)  # [B, V, H, W]
-                
-                # Extract and visualize depth per camera
-                self._last_predicted_depth = []
-                self._last_silhouette = []
-                self._last_mono_depth = []  # Placeholder for now
-                
-                if predicted_depths is not None:
-                    # Predicted depth: [B, V, H, W]
+                # --- Use GradioReconstructor if available (preferred) ---
+                if self.reconstructor is not None:
+                    # Convert input tensor to list of numpy images for GradioReconstructor
+                    # input_tensor is [B, V, C, H, W] in [0, 1]
+                    images_np = []
                     for cam_idx in range(v):
-                        depth_cam = predicted_depths[0, cam_idx].cpu().numpy()  # [H, W]
-                        # Apply colormap
-                        depth_vis = depth_to_colormap(
-                            depth_cam, 
-                            near=self.vis_config.depth_near,
-                            far=self.vis_config.depth_far
+                        img = input_tensor[0, cam_idx].permute(1, 2, 0).cpu().numpy()  # [H, W, C]
+                        images_np.append(img)
+
+                    # Get extrinsics from calibration service (already normalized)
+                    if self.calibration_service is not None:
+                        ext_tensor = self.calibration_service.get_extrinsics_tensor(
+                            device='cpu',
+                            crop_regions=self._last_crop_regions,
+                            use_virtual_camera=False,
                         )
-                        self._last_predicted_depth.append(depth_vis)
-                else:
+                        extrinsics_np = ext_tensor[0].numpy()  # [V, 4, 4]
+                    else:
+                        # Fallback: create orbit cameras
+                        from .reconstruction import create_orbit_extrinsics
+                        extrinsics_np = create_orbit_extrinsics(
+                            num_views=v,
+                            radius=TARGET_RADIUS,
+                            elevation=0.3,
+                        )
+
+                    # Run reconstruction using GradioReconstructor (uses training-matched intrinsics)
+                    gaussians, context = self.reconstructor.reconstruct(
+                        images=images_np,
+                        extrinsics=extrinsics_np,
+                        intrinsics=None,  # Use training-matched intrinsics
+                    )
+
+                    h, w = context['image'].shape[-2:]
+                    inference_time = (time.perf_counter() - start_time) * 1000
+
+                    # Extract visualizations - simplified since we don't have visualization_dump
                     self._last_predicted_depth = [None] * v
-                
-                # For silhouette, we use the opacities from Gaussians (reshaped back to image)
-                if gaussians is not None and hasattr(gaussians, "opacities"):
-                    # Opacities are [B, V*H*W*srf*spp]
-                    # We need to reshape back to [V, H, W]
-                    try:
-                        opacities = gaussians.opacities  # [B, N]
-                        # Compute per-pixel mean opacity as silhouette
-                        # N = V * H * W * srf * spp, we need to sum over srf*spp
-                        n_gaussians_per_pixel = opacities.shape[1] // (v * h * w)
-                        if n_gaussians_per_pixel > 0:
-                            opacity_per_pixel = opacities.reshape(b, v, h, w, -1).mean(dim=-1)  # [B, V, H, W]
-                            for cam_idx in range(v):
-                                opacity_cam = opacity_per_pixel[0, cam_idx].cpu().numpy()  # [H, W]
-                                # Convert to grayscale visualization
-                                opacity_vis = (np.clip(opacity_cam, 0, 1) * 255).astype(np.uint8)
-                                opacity_rgb = np.stack([opacity_vis, opacity_vis, opacity_vis], axis=-1)
-                                self._last_silhouette.append(opacity_rgb)
-                        else:
-                            self._last_silhouette = [None] * v
-                    except Exception as e:
-                        logger.debug(f"Failed to extract silhouette: {e}")
-                        self._last_silhouette = [None] * v
-                else:
                     self._last_silhouette = [None] * v
-                    
-                # Extract monocular depth from visualization_dump
-                mono_depths = visualization_dump.get("mono_depth")  # [B, V, H, W]
-                if mono_depths is not None:
-                    for cam_idx in range(v):
-                        mono_cam = mono_depths[0, cam_idx].cpu().numpy()  # [H, W]
-                        # Mono depth is residual (can be negative), visualize with different range
-                        mono_vis = depth_to_colormap(
-                            mono_cam,
-                            near=float(mono_cam.min()) if np.isfinite(mono_cam.min()) else -1.0,
-                            far=float(mono_cam.max()) if np.isfinite(mono_cam.max()) else 1.0,
-                        )
-                        self._last_mono_depth.append(mono_vis)
-                else:
                     self._last_mono_depth = [None] * v
 
-                # Extract numpy arrays for GaussianOutput
-                if gaussians is not None and hasattr(gaussians, "means"):
-                    positions = gaussians.means.cpu().numpy()
-                    covariances = gaussians.covariances.cpu().numpy()
-                    colors = gaussians.harmonics.cpu().numpy()
-                    opacities = gaussians.opacities.cpu().numpy()
+                    # Extract numpy arrays for GaussianOutput
+                    if gaussians is not None and hasattr(gaussians, "means"):
+                        positions = gaussians.means.cpu().numpy()
+                        covariances = gaussians.covariances.cpu().numpy()
+                        colors = gaussians.harmonics.cpu().numpy()
+                        opacities = gaussians.opacities.cpu().numpy()
 
-                    # Flatten batch dimensions if needed
-                    if positions.ndim > 2:
-                        positions = positions.reshape(-1, 3)
-                    if covariances.ndim > 3:
-                        covariances = covariances.reshape(-1, covariances.shape[-2], covariances.shape[-1])
-                    if colors.ndim > 3:
-                        colors = colors.reshape(-1, colors.shape[-2], colors.shape[-1])
-                    if opacities.ndim > 1:
-                        opacities = opacities.reshape(-1, 1)
+                        if positions.ndim > 2:
+                            positions = positions.reshape(-1, 3)
+                        if covariances.ndim > 3:
+                            covariances = covariances.reshape(-1, covariances.shape[-2], covariances.shape[-1])
+                        if colors.ndim > 3:
+                            colors = colors.reshape(-1, colors.shape[-2], colors.shape[-1])
+                        if opacities.ndim > 1:
+                            opacities = opacities.reshape(-1, 1)
+
+                        # Extract silhouettes from opacities
+                        try:
+                            opacity_data = gaussians.opacities
+                            n_per_pixel = opacity_data.shape[1] // (v * h * w)
+                            if n_per_pixel > 0:
+                                opacity_per_pixel = opacity_data.reshape(1, v, h, w, -1).mean(dim=-1)
+                                for cam_idx in range(v):
+                                    opacity_cam = opacity_per_pixel[0, cam_idx].cpu().numpy()
+                                    opacity_vis = (np.clip(opacity_cam, 0, 1) * 255).astype(np.uint8)
+                                    opacity_rgb = np.stack([opacity_vis]*3, axis=-1)
+                                    self._last_silhouette[cam_idx] = opacity_rgb
+                        except:
+                            pass
+                    else:
+                        positions = np.zeros((0, 3), dtype=np.float32)
+                        covariances = np.zeros((0, 3, 3), dtype=np.float32)
+                        colors = np.zeros((0, 3), dtype=np.float32)
+                        opacities = np.zeros((0, 1), dtype=np.float32)
+
+                # --- Fallback to original code if GradioReconstructor not available ---
                 else:
-                    positions = np.zeros((0, 3), dtype=np.float32)
-                    covariances = np.zeros((0, 3, 3), dtype=np.float32)
-                    colors = np.zeros((0, 3), dtype=np.float32)
-                    opacities = np.zeros((0, 1), dtype=np.float32)
+                    # Get camera parameters from calibration service or use defaults
+                    if self.calibration_service is not None:
+                        intrinsics = self.calibration_service.get_intrinsics_tensor(
+                            device=self.device,
+                            crop_regions=self._last_crop_regions,
+                            use_virtual_camera=False,
+                        )
+                        extrinsics = self.calibration_service.get_extrinsics_tensor(
+                            device=self.device,
+                            crop_regions=self._last_crop_regions,
+                            use_virtual_camera=False,
+                        )
+                    else:
+                        # Fallback to training-matched intrinsics
+                        intrinsics = torch.zeros(b, v, 3, 3, device=self.device)
+                        intrinsics[:, :, 0, 0] = TRAINING_FX_NORM
+                        intrinsics[:, :, 1, 1] = TRAINING_FX_NORM
+                        intrinsics[:, :, 0, 2] = 0.5
+                        intrinsics[:, :, 1, 2] = 0.5
+                        intrinsics[:, :, 2, 2] = 1.0
+
+                        extrinsics = torch.eye(4, device=self.device).unsqueeze(0).unsqueeze(0).expand(b, v, 4, 4).clone()
+                        for i in range(v):
+                            angle = 2 * np.pi * i / v
+                            radius = TARGET_RADIUS
+                            extrinsics[:, i, 0, 3] = radius * np.cos(angle)
+                            extrinsics[:, i, 1, 3] = radius * np.sin(angle)
+                            extrinsics[:, i, 2, 3] = 0.0
+
+                    # Build batch and apply data_shim
+                    batch = self.build_batch(
+                        images=input_tensor,
+                        extrinsics=extrinsics,
+                        intrinsics=intrinsics,
+                        near=0.55,
+                        far=2.54,
+                    )
+
+                    if self.data_shim is not None:
+                        batch = self.data_shim(batch)
+
+                    context = batch['context']
+                    h, w = context['image'].shape[-2:]
+
+                    visualization_dump = {}
+                    result = self.model.encoder(
+                        context,
+                        global_step=0,
+                        deterministic=True,
+                        visualization_dump=visualization_dump,
+                    )
+
+                    inference_time = (time.perf_counter() - start_time) * 1000
+
+                    # Handle both dict output (when return_depth=True) and direct Gaussians output
+                    if isinstance(result, dict):
+                        gaussians = result.get("gaussians")
+                        predicted_depths = result.get("depths")
+                    else:
+                        gaussians = result
+                        predicted_depths = None
+
+                    # Try to get depth from visualization_dump
+                    if "depth" in visualization_dump and predicted_depths is None:
+                        predicted_depths = visualization_dump["depth"]
+                        if predicted_depths.dim() > 4:
+                            predicted_depths = predicted_depths.squeeze(-1).squeeze(-1)
+
+                    # Extract and visualize depth per camera
+                    self._last_predicted_depth = []
+                    self._last_silhouette = []
+                    self._last_mono_depth = []
+
+                    if predicted_depths is not None:
+                        for cam_idx in range(v):
+                            depth_cam = predicted_depths[0, cam_idx].cpu().numpy()
+                            depth_vis = depth_to_colormap(
+                                depth_cam,
+                                near=self.vis_config.depth_near,
+                                far=self.vis_config.depth_far
+                            )
+                            self._last_predicted_depth.append(depth_vis)
+                    else:
+                        self._last_predicted_depth = [None] * v
+
+                    # Extract silhouettes from opacities
+                    if gaussians is not None and hasattr(gaussians, "opacities"):
+                        try:
+                            opacities = gaussians.opacities
+                            n_gaussians_per_pixel = opacities.shape[1] // (v * h * w)
+                            if n_gaussians_per_pixel > 0:
+                                opacity_per_pixel = opacities.reshape(b, v, h, w, -1).mean(dim=-1)
+                                for cam_idx in range(v):
+                                    opacity_cam = opacity_per_pixel[0, cam_idx].cpu().numpy()
+                                    opacity_vis = (np.clip(opacity_cam, 0, 1) * 255).astype(np.uint8)
+                                    opacity_rgb = np.stack([opacity_vis]*3, axis=-1)
+                                    self._last_silhouette.append(opacity_rgb)
+                            else:
+                                self._last_silhouette = [None] * v
+                        except Exception as e:
+                            logger.debug(f"Failed to extract silhouette: {e}")
+                            self._last_silhouette = [None] * v
+                    else:
+                        self._last_silhouette = [None] * v
+
+                    # Extract monocular depth from visualization_dump
+                    mono_depths = visualization_dump.get("mono_depth")
+                    if mono_depths is not None:
+                        for cam_idx in range(v):
+                            mono_cam = mono_depths[0, cam_idx].cpu().numpy()
+                            mono_vis = depth_to_colormap(
+                                mono_cam,
+                                near=float(mono_cam.min()) if np.isfinite(mono_cam.min()) else -1.0,
+                                far=float(mono_cam.max()) if np.isfinite(mono_cam.max()) else 1.0,
+                            )
+                            self._last_mono_depth.append(mono_vis)
+                    else:
+                        self._last_mono_depth = [None] * v
+
+                    # Extract numpy arrays for GaussianOutput
+                    if gaussians is not None and hasattr(gaussians, "means"):
+                        positions = gaussians.means.cpu().numpy()
+                        covariances = gaussians.covariances.cpu().numpy()
+                        colors = gaussians.harmonics.cpu().numpy()
+                        opacities = gaussians.opacities.cpu().numpy()
+
+                        if positions.ndim > 2:
+                            positions = positions.reshape(-1, 3)
+                        if covariances.ndim > 3:
+                            covariances = covariances.reshape(-1, covariances.shape[-2], covariances.shape[-1])
+                        if colors.ndim > 3:
+                            colors = colors.reshape(-1, colors.shape[-2], colors.shape[-1])
+                        if opacities.ndim > 1:
+                            opacities = opacities.reshape(-1, 1)
+                    else:
+                        positions = np.zeros((0, 3), dtype=np.float32)
+                        covariances = np.zeros((0, 3, 3), dtype=np.float32)
+                        colors = np.zeros((0, 3), dtype=np.float32)
+                        opacities = np.zeros((0, 1), dtype=np.float32)
 
             except Exception as e:
                 logger.error(f"Inference error: {e}")
@@ -463,7 +662,7 @@ class VisualizationPipeline(DepthSplatPipeline):
 
     def _render_gaussians(self, gaussians, render_camera) -> Optional[np.ndarray]:
         """
-        Render Gaussians using the decoder.
+        Render Gaussians using the GradioReconstructor (exact Gradio demo pipeline).
 
         Args:
             gaussians: Gaussian parameters from encoder
@@ -472,56 +671,73 @@ class VisualizationPipeline(DepthSplatPipeline):
         Returns:
             HWC RGB numpy array of rendered image, or None on error
         """
-        if self.decoder is None or gaussians is None:
+        if gaussians is None:
             return None
 
         try:
-            import torch
             render_start = time.perf_counter()
 
-            with torch.no_grad():
+            # Use GradioReconstructor if available (preferred - exact Gradio demo pipeline)
+            if self.reconstructor is not None:
                 # Get render resolution
                 h, w = self.vis_config.render_height, self.vis_config.render_width
 
-                # Prepare camera parameters
-                device = self.device
-
-                # Extrinsics: [1, 1, 4, 4]
-                extrinsics = torch.from_numpy(
-                    render_camera.extrinsics
-                ).float().to(device).unsqueeze(0).unsqueeze(0)
-
-                # Intrinsics: [1, 1, 3, 3]
-                intrinsics = torch.from_numpy(
-                    render_camera.intrinsics
-                ).float().to(device).unsqueeze(0).unsqueeze(0)
-
-                # Near/far: [1, 1]
-                near = torch.tensor([[render_camera.near]], device=device)
-                far = torch.tensor([[render_camera.far]], device=device)
-
-                # Call decoder
-                output = self.decoder(
-                    gaussians,
-                    extrinsics,
-                    intrinsics,
-                    near,
-                    far,
+                # Use the orbit camera from GradioReconstructor (exact Gradio demo camera)
+                color = self.reconstructor.render(
+                    gaussians=gaussians,
+                    extrinsics=render_camera.extrinsics,
+                    intrinsics=render_camera.intrinsics,
                     image_shape=(h, w),
                 )
 
-                # Extract color output: [1, 1, 3, H, W] -> [H, W, 3]
-                color = output.color[0, 0]  # [3, H, W]
-                color = color.permute(1, 2, 0)  # [H, W, 3]
-                color = color.clamp(0, 1)
-                color = (color * 255).byte().cpu().numpy()
+                render_time = (time.perf_counter() - render_start) * 1000
+                self.render_times.append(render_time)
+                if len(self.render_times) > 100:
+                    self.render_times.pop(0)
 
-            render_time = (time.perf_counter() - render_start) * 1000
-            self.render_times.append(render_time)
-            if len(self.render_times) > 100:
-                self.render_times.pop(0)
+                return color
 
-            return color
+            # Fallback to direct decoder call if GradioReconstructor not available
+            elif self.decoder is not None:
+                import torch
+
+                with torch.no_grad():
+                    h, w = self.vis_config.render_height, self.vis_config.render_width
+                    device = self.device
+
+                    extrinsics = torch.from_numpy(
+                        render_camera.extrinsics
+                    ).float().to(device).unsqueeze(0).unsqueeze(0)
+
+                    intrinsics = torch.from_numpy(
+                        render_camera.intrinsics
+                    ).float().to(device).unsqueeze(0).unsqueeze(0)
+
+                    near = torch.tensor([[render_camera.near]], device=device)
+                    far = torch.tensor([[render_camera.far]], device=device)
+
+                    output = self.decoder(
+                        gaussians,
+                        extrinsics,
+                        intrinsics,
+                        near,
+                        far,
+                        image_shape=(h, w),
+                    )
+
+                    color = output.color[0, 0]
+                    color = color.permute(1, 2, 0)
+                    color = color.clamp(0, 1)
+                    color = (color * 255).byte().cpu().numpy()
+
+                render_time = (time.perf_counter() - render_start) * 1000
+                self.render_times.append(render_time)
+                if len(self.render_times) > 100:
+                    self.render_times.pop(0)
+
+                return color
+
+            return None
 
         except Exception as e:
             logger.error(f"Rendering error: {e}")
@@ -738,13 +954,10 @@ class VisualizationPipeline(DepthSplatPipeline):
             # BGR to RGB
             frame_cropped = cv2.cvtColor(frame_cropped, cv2.COLOR_BGR2RGB)
             
-            # Normalize to [0, 1]
+            # Normalize to [0, 1] - NO ImageNet normalization!
+            # The DepthSplat model expects [0, 1] range (same as torchvision.ToTensor())
+            # ImageNet mean/std normalization would corrupt the input distribution
             frame_cropped = frame_cropped.astype(np.float32) / 255.0
-            
-            # ImageNet normalization
-            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-            std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-            frame_cropped = (frame_cropped - mean) / std
             
             # HWC to CHW
             frame_cropped = np.transpose(frame_cropped, (2, 0, 1))
@@ -765,13 +978,31 @@ class VisualizationPipeline(DepthSplatPipeline):
         """Extended processing loop with visualization."""
         frame_interval = self.config.frame_interval_us / 1e6
 
-        logger.info(f"Visualization pipeline processing at {self.config.target_fps} FPS target")
+        # Determine frame source mode
+        use_file_source = self.file_frame_source is not None
+        if use_file_source:
+            logger.info(
+                f"Visualization pipeline using FILE SOURCE at {self.config.target_fps} FPS target"
+            )
+        else:
+            logger.info(
+                f"Visualization pipeline using RTSP streams at {self.config.target_fps} FPS target"
+            )
 
         while self.running:
             loop_start = time.perf_counter()
 
-            # Capture frames from all streams
-            frames = self._capture_frames()
+            # Get the frame ID FIRST (for synchronization)
+            if use_file_source:
+                # File source: advance frame and get synchronized frame ID
+                frame_id = self.file_frame_source.advance_frame()
+                frames = self.file_frame_source.get_current_frames()
+                logger.debug(f"File source frame {frame_id}")
+            else:
+                # RTSP: capture frames (no frame ID available)
+                frames = self._capture_frames()
+                frame_id = None
+
             self._last_raw_frames = frames
 
             # Skip if no valid frames
@@ -781,14 +1012,25 @@ class VisualizationPipeline(DepthSplatPipeline):
                 continue
 
             # Get detections for current frame from detection service
+            # CRITICAL: Use the same frame_id for perfect synchronization
             detections = None
             if self.detection_service is not None:
-                detections = self.detection_service.advance_frame()
-                if detections is not None:
-                    logger.debug(
-                        f"Frame {self.frame_count}: Got detections for "
-                        f"{len(detections.detections)} cameras"
-                    )
+                if use_file_source and frame_id is not None:
+                    # File source: get detections for the EXACT frame ID
+                    detections = self.detection_service.get_detections(frame_id)
+                    if detections is not None:
+                        logger.debug(
+                            f"Frame {frame_id}: Got synchronized detections for "
+                            f"{len(detections.detections)} cameras"
+                        )
+                else:
+                    # RTSP: advance detection service independently (may drift!)
+                    detections = self.detection_service.advance_frame()
+                    if detections is not None:
+                        logger.debug(
+                            f"Frame {self.frame_count}: Got detections for "
+                            f"{len(detections.detections)} cameras (may be out of sync)"
+                        )
 
             # Preprocess for model with detection-based cropping
             input_tensor = self._preprocess_frames_with_detections(frames, detections)
@@ -907,7 +1149,8 @@ class VisualizationPipeline(DepthSplatPipeline):
             return
 
         try:
-            encode_start = time.perf_counter()
+            total_start = time.perf_counter()
+            column_latency = {}
 
             # Get render camera from server
             render_camera = self.vis_server.get_render_camera()
@@ -919,59 +1162,80 @@ class VisualizationPipeline(DepthSplatPipeline):
             )
 
             # Create cropped views for all cameras using detection coordinates
+            t0 = time.perf_counter()
             cropped_views = self._create_cropped_views(raw_frames, detections)
-            
-            # Get ground truth depth for visualization
+            column_latency["cropped_ms"] = (time.perf_counter() - t0) * 1000
+
+            # Get ground truth depth for visualization (only if enabled)
             gt_depth_views = []
-            if self.gt_depth_service is not None and self._last_crop_regions:
-                from services import depth_to_colormap
-                try:
-                    # Advance GT depth service frame to stay in sync
-                    self.gt_depth_service.advance_frame()
-                    
-                    # Get cropped depth per camera
-                    for i, camera_name in enumerate([f"cam_{j+1:02d}" for j in range(self.config.num_cameras)]):
-                        if i < len(self._last_crop_regions) and self._last_crop_regions[i]:
-                            depth = self.gt_depth_service.get_cropped_depth(
-                                camera_name,
-                                self._last_crop_regions[i],
-                                output_size=(256, 256)
-                            )
-                            if depth is not None:
-                                # Use actual depth range in cropped region for better visualization
-                                # Exclude invalid depths (0, NaN, inf)
-                                valid_depth = depth[(depth > 0) & np.isfinite(depth)]
-                                if valid_depth.size > 0:
-                                    crop_near = float(np.nanmin(valid_depth))
-                                    crop_far = float(np.nanmax(valid_depth))
-                                    # Sanity check
-                                    if not np.isfinite(crop_near) or not np.isfinite(crop_far):
+            gt_depth_enabled = self.vis_server.gt_depth_enabled if self.vis_server else False
+
+            # Always advance GT depth service frame counter to stay in sync,
+            # but only do the expensive depth reading/encoding when enabled
+            if self.gt_depth_service is not None:
+                # Advance frame counter regardless of enabled state
+                self.gt_depth_service.advance_frame()
+
+                if gt_depth_enabled and self._last_crop_regions:
+                    from services import depth_to_colormap
+                    t0 = time.perf_counter()
+                    try:
+                        # Get cropped depth per camera
+                        for i, camera_name in enumerate([f"cam_{j+1:02d}" for j in range(self.config.num_cameras)]):
+                            if i < len(self._last_crop_regions) and self._last_crop_regions[i]:
+                                depth = self.gt_depth_service.get_cropped_depth(
+                                    camera_name,
+                                    self._last_crop_regions[i],
+                                    output_size=(256, 256)
+                                )
+                                if depth is not None:
+                                    # Use actual depth range in cropped region for better visualization
+                                    # Exclude invalid depths (0, NaN, inf)
+                                    valid_depth = depth[(depth > 0) & np.isfinite(depth)]
+                                    if valid_depth.size > 0:
+                                        crop_near = float(np.nanmin(valid_depth))
+                                        crop_far = float(np.nanmax(valid_depth))
+                                        # Sanity check
+                                        if not np.isfinite(crop_near) or not np.isfinite(crop_far):
+                                            crop_near = self.vis_config.depth_near
+                                            crop_far = self.vis_config.depth_far
+                                        else:
+                                            # Add small margin to avoid clipping
+                                            margin = (crop_far - crop_near) * 0.05
+                                            crop_near = max(0.1, crop_near - margin)
+                                            crop_far = crop_far + margin
+                                    else:
                                         crop_near = self.vis_config.depth_near
                                         crop_far = self.vis_config.depth_far
-                                    else:
-                                        # Add small margin to avoid clipping
-                                        margin = (crop_far - crop_near) * 0.05
-                                        crop_near = max(0.1, crop_near - margin)
-                                        crop_far = crop_far + margin
+
+                                    depth_vis = depth_to_colormap(
+                                        depth,
+                                        near=crop_near,
+                                        far=crop_far
+                                    )
+                                    gt_depth_views.append(depth_vis)
                                 else:
-                                    crop_near = self.vis_config.depth_near
-                                    crop_far = self.vis_config.depth_far
-                                
-                                depth_vis = depth_to_colormap(
-                                    depth,
-                                    near=crop_near,
-                                    far=crop_far
-                                )
-                                gt_depth_views.append(depth_vis)
+                                    gt_depth_views.append(None)
                             else:
                                 gt_depth_views.append(None)
-                        else:
-                            gt_depth_views.append(None)
-                except Exception as e:
-                    logger.debug(f"Failed to get GT depth: {e}")
+                    except Exception as e:
+                        logger.debug(f"Failed to get GT depth: {e}")
+                        gt_depth_views = [None] * self.config.num_cameras
+                    column_latency["gt_depth_ms"] = (time.perf_counter() - t0) * 1000
+                else:
                     gt_depth_views = [None] * self.config.num_cameras
+                    column_latency["gt_depth_ms"] = 0.0
             else:
                 gt_depth_views = [None] * self.config.num_cameras
+                column_latency["gt_depth_ms"] = 0.0
+
+            # Track input frame encoding time (estimated from total encode time)
+            column_latency["input_ms"] = 0.0  # Will be updated below
+
+            # Track other column latencies (these are produced during inference)
+            column_latency["mono_depth_ms"] = 0.0  # Already computed in inference
+            column_latency["predicted_depth_ms"] = 0.0  # Already computed in inference
+            column_latency["silhouette_ms"] = 0.0  # Already computed in inference
 
             # Compute stats
             avg_render_time = np.mean(self.render_times) if self.render_times else 0
@@ -983,6 +1247,7 @@ class VisualizationPipeline(DepthSplatPipeline):
                 "decoder_ms": avg_render_time,
                 "total_latency_ms": output.inference_time_ms + avg_render_time + avg_encode_time,
                 "fps": self.frame_count / max(1, time.time() - self.start_time) if self.start_time else 0,
+                "column_latency": column_latency,
             }
 
             # Create frame packet with all visualizations
@@ -994,13 +1259,13 @@ class VisualizationPipeline(DepthSplatPipeline):
                 gaussian_render=gaussian_render,
                 stats=stats,
                 config=vis_config,
-                gt_depth_frames=gt_depth_views,
+                gt_depth_frames=gt_depth_views if gt_depth_enabled else None,
                 mono_depth_frames=self._last_mono_depth,
                 predicted_depth_frames=self._last_predicted_depth,
                 silhouette_frames=self._last_silhouette,
             )
 
-            encode_time = (time.perf_counter() - encode_start) * 1000
+            encode_time = (time.perf_counter() - total_start) * 1000
             self.encode_times.append(encode_time)
             if len(self.encode_times) > 100:
                 self.encode_times.pop(0)

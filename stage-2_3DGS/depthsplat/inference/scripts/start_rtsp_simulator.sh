@@ -5,9 +5,11 @@
 # This script starts the RTSP server that simulates 5 IP camera feeds
 # from pre-rendered IsaacSim frames using GStreamer.
 #
+# Configuration is read from config/pipeline_config.yaml
+#
 # Usage:
-#   ./start_rtsp_simulator.sh                    # Use defaults
-#   ./start_rtsp_simulator.sh --fps 60           # Custom FPS
+#   ./start_rtsp_simulator.sh                    # Use config defaults
+#   ./start_rtsp_simulator.sh --fps 60           # Override FPS
 #
 # Streams will be available at:
 #   rtsp://localhost:8554/cam_01
@@ -21,11 +23,7 @@ set -e
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFERENCE_DIR="$(dirname "$SCRIPT_DIR")"
-
-# Default paths
-DEFAULT_RENDER_DIR="/home/sandro/aeroSplat-4D/renders/5cams_bird_10m"
-DEFAULT_PORT=8554
-DEFAULT_FPS=30
+CONFIG_FILE="$INFERENCE_DIR/config/pipeline_config.yaml"
 
 # GStreamer environment variables for conda compatibility
 # These must be set BEFORE checking dependencies or running the server
@@ -49,6 +47,55 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Read config values from YAML using Python
+read_config() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        log_error "Config file not found: $CONFIG_FILE"
+        exit 1
+    fi
+
+    log_info "Reading configuration from: $CONFIG_FILE"
+
+    # Use Python to parse YAML and extract values
+    CONFIG_VALUES=$(python3 << EOF
+import yaml
+import sys
+
+try:
+    with open("$CONFIG_FILE", 'r') as f:
+        config = yaml.safe_load(f)
+
+    # Extract values with defaults
+    render_dir = config.get('render_dir', '/home/sandro/aeroSplat-4D/renders/5cams_drone_50m')
+
+    # Get simulator config
+    simulator = config.get('sources', {}).get('simulator', {})
+    port = simulator.get('port', 8554)
+    fps = simulator.get('fps', 30)
+
+    # Get file source config for num_frames
+    file_source = config.get('visualization', {}).get('file_source', {})
+    num_frames = file_source.get('num_frames', 120)
+
+    print(f"RENDER_DIR={render_dir}")
+    print(f"PORT={port}")
+    print(f"FPS={fps}")
+    print(f"NUM_FRAMES={num_frames}")
+except Exception as e:
+    print(f"ERROR={e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+)
+
+    if [ $? -ne 0 ]; then
+        log_error "Failed to parse config file"
+        exit 1
+    fi
+
+    # Export the values
+    eval "$CONFIG_VALUES"
 }
 
 # Check dependencies
@@ -124,12 +171,18 @@ print_banner() {
 main() {
     print_banner
 
-    # Parse arguments
-    RENDER_DIR="$DEFAULT_RENDER_DIR"
-    PORT="$DEFAULT_PORT"
-    FPS="$DEFAULT_FPS"
-    INSTALL=""
+    # Check for install flag first (before reading config)
+    for arg in "$@"; do
+        if [ "$arg" = "--install-gstreamer" ]; then
+            install_gstreamer
+            exit 0
+        fi
+    done
 
+    # Read config from YAML file
+    read_config
+
+    # Parse command line arguments (can override config values)
     while [[ $# -gt 0 ]]; do
         case $1 in
             --render-dir)
@@ -144,20 +197,29 @@ main() {
                 FPS="$2"
                 shift 2
                 ;;
-            --install-gstreamer)
-                INSTALL="gstreamer"
-                shift
+            --config)
+                # Already handled by read_config, but allow explicit override
+                CONFIG_FILE="$2"
+                read_config
+                shift 2
                 ;;
             --help|-h)
                 echo "Usage: $0 [OPTIONS]"
                 echo ""
-                echo "Options:"
-                echo "  --render-dir PATH     Path to renders directory (default: $DEFAULT_RENDER_DIR)"
-                echo "  --port PORT           RTSP server port (default: $DEFAULT_PORT)"
-                echo "  --fps FPS             Frames per second (default: $DEFAULT_FPS)"
+                echo "Configuration is read from: $CONFIG_FILE"
+                echo ""
+                echo "Options (override config values):"
+                echo "  --render-dir PATH     Path to renders directory"
+                echo "  --port PORT           RTSP server port"
+                echo "  --fps FPS             Frames per second"
+                echo "  --config PATH         Use different config file"
                 echo "  --install-gstreamer   Install GStreamer dependencies"
                 echo "  --help                Show this help"
                 exit 0
+                ;;
+            --install-gstreamer)
+                # Already handled above
+                shift
                 ;;
             *)
                 log_error "Unknown option: $1"
@@ -165,12 +227,6 @@ main() {
                 ;;
         esac
     done
-
-    # Handle installation requests
-    if [ "$INSTALL" = "gstreamer" ]; then
-        install_gstreamer
-        exit 0
-    fi
 
     # Check dependencies
     check_dependencies
@@ -193,7 +249,7 @@ main() {
     log_info "Found $FRAME_COUNT frames per camera"
 
     # Print configuration
-    log_info "Configuration:"
+    log_info "Configuration (from $CONFIG_FILE):"
     echo "  Render directory: $RENDER_DIR"
     echo "  Port: $PORT"
     echo "  FPS: $FPS"

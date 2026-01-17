@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Optional
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import functools
+import os
 
 # Add inference directory to path
 INFERENCE_DIR = Path(__file__).parent
@@ -247,6 +248,22 @@ Examples:
         view_config = vis_config.get('view', {})
         detection_config = vis_config.get('detection', {})
         gt_depth_config = vis_config.get('gt_depth', {})
+        file_source_config = vis_config.get('file_source', {})
+
+        # Get render directory (single source of truth for all render-related paths)
+        render_dir = config._raw_dict.get('render_dir')
+        if render_dir:
+            logger.info(f"Using render directory: {render_dir}")
+            # Construct paths from render_dir
+            gt_path = os.path.join(render_dir, "drone_camera_observations.json")
+            gt_depth_base_path = render_dir if gt_depth_config.get('enabled', True) else None
+            file_source_dir = render_dir
+        else:
+            # Fallback to individual paths (legacy config support)
+            logger.warning("No render_dir configured, using individual paths")
+            gt_path = detection_config.get('gt_path')
+            gt_depth_base_path = gt_depth_config.get('base_path') if gt_depth_config.get('enabled', True) else None
+            file_source_dir = file_source_config.get('directory')
 
         # Create pipeline config
         pipeline_config = VisualizationPipelineConfig(
@@ -267,16 +284,21 @@ Examples:
             input_thumbnail_width=thumb_config.get('width', 192),
             input_thumbnail_height=thumb_config.get('height', 108),
             jpeg_quality=render_config.get('jpeg_quality', 85),
-            # Detection service settings
+            # Detection service settings (paths derived from render_dir)
             detection_enabled=detection_config.get('enabled', True),
-            detection_gt_path=detection_config.get('gt_path'),
+            detection_gt_path=gt_path,
             min_crop_size=detection_config.get('min_crop_size', 64),
             target_object_coverage=detection_config.get('target_object_coverage', 0.75),
             crop_margin=detection_config.get('crop_margin', 0.15),
-            # GT depth visualization settings
-            gt_depth_base_path=gt_depth_config.get('base_path') if gt_depth_config.get('enabled', True) else None,
+            # GT depth visualization settings (paths derived from render_dir)
+            gt_depth_base_path=gt_depth_base_path,
             depth_near=gt_depth_config.get('depth_near', 0.5),
             depth_far=gt_depth_config.get('depth_far', 100.0),
+            # File-based frame source settings (paths derived from render_dir)
+            use_file_source=file_source_config.get('enabled', False),
+            file_source_dir=file_source_dir,
+            file_source_num_frames=file_source_config.get('num_frames', 120),
+            file_source_loop=file_source_config.get('loop', True),
         )
 
         pipeline = VisualizationPipeline(pipeline_config)
