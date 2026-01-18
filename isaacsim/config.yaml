@@ -70,14 +70,13 @@ cameras:
 # Object Configuration (drone, bird, etc.)
 # =====================================================================
 drone:
+  # Asset to use (must match a key in asset_config.yaml)
+  asset_name: "bald-eagle-med-poly.usdc"
+  
   # Path to the object USD/FBX file to load
   # Asset type is auto-detected from the file path (keywords: bird, eagle, drone, etc.)
 
-  # Drone example:
-  usd_path: "/home/sandro/thesis/assets/drones/ofm-seeker-drone_c8fed575-ee29-4297-91f5-9a0f97baa042/ofm-seeker-drone_2K_c55c3fe7-e3f2-4dcd-9fff-175121f13263.usdc"
-
-  # Bird example:
-  # usd_path: "/home/sandro/thesis/assets/birds/white-eagle-animation-fast-fly/source/Eagle Fly/EAGLE FLY.fbx"
+  # usd_path is now loaded from asset_config.yaml based on asset_name
 
   # Path where the object will be loaded in the stage
   prim_path: "/World/Drone"

@@ -41,35 +41,8 @@ MODULES_LOADED = False
 # Determine the root project folder
 # When run from Script Editor, __file__ may be a temp path, so we need to be clever
 def _get_project_root():
-    """Get the project root folder, handling Script Editor temp directories."""
-    # Try to use __file__ first if it's reasonable
-    if "__file__" in globals():
-        file_path = Path(__file__).resolve()
-        # Check if this is a temp file from Script Editor (usually in /tmp/carb.*)
-        if "/tmp/carb" not in str(file_path):
-            return file_path.parent
-    
-    # Fallback: try common locations
-    # 1. Current working directory (if it has our modules)
-    cwd = Path.cwd()
-    if (cwd / "load_scene.py").exists():
-        return cwd
-    
-    # 2. Look for this file in common locations
-    project_paths = [
-        Path("/home/sandro/thesis/code/isaacSim_snippets"),
-        Path.home() / "thesis/code/isaacSim_snippets",
-        Path.home() / ".isaac/runner_project",
-    ]
-    
-    for path in project_paths:
-        if (path / "load_scene.py").exists():
-            return path
-    
-    # Last resort: print error info and return cwd
-    print("[RUNNER] WARNING: Could not auto-detect project root.")
-    print("[RUNNER] Please set ROOT manually or run from project directory.")
-    return cwd
+    """Get the project root folder, hardcoded location."""
+    return Path("/home/sandro/aeroSplat-4D/isaacsim")
 
 ROOT = _get_project_root()
 print(f"[RUNNER] Project root: {ROOT}")
@@ -242,6 +215,32 @@ def load_config(config_path=None):
         with open(config_path, 'r') as f:
             cfg = yaml.safe_load(f)
         print(f"[RUNNER] Loaded configuration from {config_path}")
+
+        # Load asset configuration
+        asset_config_path = ROOT / "asset_config.yaml"
+        if asset_config_path.exists():
+            try:
+                with open(asset_config_path, 'r') as f:
+                    asset_configs = yaml.safe_load(f)
+                
+                # Merge into main config
+                drone_cfg = cfg.get("drone", {})
+                asset_name = drone_cfg.get("asset_name")
+                
+                if asset_name and asset_configs and asset_name in asset_configs:
+                    print(f"[RUNNER] Applying asset config for: {asset_name}")
+                    asset_data = asset_configs[asset_name]
+                    # Merge asset_data into drone_cfg
+                    drone_cfg.update(asset_data)
+                    cfg["drone"] = drone_cfg
+                elif asset_name:
+                    print(f"[RUNNER] WARNING: Asset '{asset_name}' not found in asset_config.yaml")
+
+            except Exception as e:
+                print(f"[RUNNER] ERROR: Failed to parse asset_config.yaml: {e}")
+        else:
+             print(f"[RUNNER] Warning: asset_config.yaml not found at {asset_config_path}")
+        
         return cfg
     except Exception as e:
         print(f"[RUNNER] ERROR: Failed to parse config.yaml: {e}")

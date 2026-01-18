@@ -139,7 +139,7 @@ Priority: **Stage 3 (paper)** > Stage 2 (feeds stage 3) > Stage 1 & IsaacSim (th
 
 ### Real World Data
 
-- [ ] check if https://github.com/CenekAlbl/drone-tracking-datasets works
+- [ ] check if https://github.com/CenekAlbl/drone-tracking-datasets works (set 3 & 5 have cam/3D drone positions)
 - [ ] Specify exact 2k cameras
 - [ ] Get 5 camera's + switch to handle traffic and setup camera capture live stream
 - [ ] Generate dataset (fly a drone through the camera's field of view, get an RC bird?)
@@ -152,6 +152,7 @@ Priority: **Stage 3 (paper)** > Stage 2 (feeds stage 3) > Stage 1 & IsaacSim (th
 
 - [ ] End-to-end script: video → stage-1 → stage-2 → stage-3 → classification — *prove full system works*
 - [ ] Latency measurement across full pipeline — *real-time feasibility claim*
+- [ ] pareto front of #cameras vs accuracy (classification & tracking)
 - [ ] Docker compose for reproducibility — *nice-to-have, lower priority*
 
 ---

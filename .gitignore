@@ -5,3 +5,6 @@ report/paper/build/*
 !report/paper/build/*.pdf
 
 assets/*
+
+
+**/__pycache__/*

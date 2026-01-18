@@ -93,8 +93,11 @@ class LoadDrone:
         obj_prim = stage.DefinePrim(prim_path, "Xform")
         obj_prim.GetReferences().AddReference(usd_path)
 
-        # Apply unit resolution transforms for specific asset types (mimics Isaac Sim GUI import)
-        self._apply_units_resolve(obj_prim)
+        # Apply config-defined transforms (translation, orientation, scale)
+        self._apply_config_transforms(obj_prim)
+        
+        # Apply unit resolution transforms for specific asset types (legacy method)
+        # self._apply_units_resolve(obj_prim)
 
         if self.verbose:
             print(f"[LOAD_OBJECT] ✓ Asset loaded at: {prim_path}")
@@ -112,39 +115,93 @@ class LoadDrone:
 
         return obj_prim
 
+    def _apply_config_transforms(self, prim):
+        """Apply translation, orientation, and scale from config."""
+        xformable = UsdGeom.Xformable(prim)
+        if not xformable:
+            return
+
+        # Translation
+        translation = self.drone_cfg.get("translation")
+        if translation:
+            try:
+                # Add or update translation op
+                # Check for existing op or add new one
+                xform_ops = xformable.GetOrderedXformOps()
+                translate_op = None
+                for op in xform_ops:
+                    if op.GetOpType() == UsdGeom.XformOp.TypeTranslate:
+                        translate_op = op
+                        break
+                
+                if not translate_op:
+                    translate_op = xformable.AddTranslateOp()
+                
+                translate_op.Set(Gf.Vec3d(translation))
+                if self.verbose:
+                    print(f"[LOAD_OBJECT] Applied translation: {translation}")
+            except Exception as e:
+                print(f"[LOAD_OBJECT] WARNING: Failed to apply translation: {e}")
+
+        # Orientation (Euler degrees)
+        orientation = self.drone_cfg.get("orientation")
+        if orientation:
+            try:
+                # Use RotateXYZ op for Euler angles
+                # Check for existing op
+                xform_ops = xformable.GetOrderedXformOps()
+                rotate_op = None
+                for op in xform_ops:
+                    if op.GetOpType() == UsdGeom.XformOp.TypeRotateXYZ:
+                        rotate_op = op
+                        break
+                
+                if not rotate_op:
+                    rotate_op = xformable.AddRotateXYZOp()
+                
+                rotate_op.Set(Gf.Vec3d(orientation))
+                if self.verbose:
+                    print(f"[LOAD_OBJECT] Applied orientation: {orientation}")
+            except Exception as e:
+                print(f"[LOAD_OBJECT] WARNING: Failed to apply orientation: {e}")
+
+        # Scale
+        scale = self.drone_cfg.get("scale")
+        if scale:
+            try:
+                xform_ops = xformable.GetOrderedXformOps()
+                scale_op = None
+                for op in xform_ops:
+                    if op.GetOpType() == UsdGeom.XformOp.TypeScale:
+                        scale_op = op
+                        break
+                
+                if not scale_op:
+                    scale_op = xformable.AddScaleOp()
+                
+                scale_op.Set(Gf.Vec3f(scale))
+                if self.verbose:
+                    print(f"[LOAD_OBJECT] Applied scale: {scale}")
+            except Exception as e:
+                print(f"[LOAD_OBJECT] WARNING: Failed to apply scale: {e}")
+
     def _apply_units_resolve(self, prim):
         """Apply unit resolution transforms for specific asset types.
-
-        This mimics Isaac Sim's GUI import behavior which automatically applies
-        Rotate:unitsResolve and Scale:unitsResolve for FBX files with mismatched units.
-
-        For birds (FBX files):
-          - Scale: 0.01 (FBX typically in centimeters, USD in meters)
-          - Rotate X: 90 degrees (Y-up to Z-up coordinate system)
+        
+        DEPRECATED: Prefer using explicit transforms in asset_config.yaml
+        """
+        # ... legacy implementation kept if needed ...
+        pass
+        
+        # Original implementation below for reference if revert needed
         """
         if self.asset_type != TYPE_BIRD:
             # Only apply for birds - drones and other USD assets don't need this
             return
-
+        
         xformable = UsdGeom.Xformable(prim)
-        if not xformable:
-            if self.verbose:
-                print("[LOAD_OBJECT] WARNING: Could not get Xformable for units resolve")
-            return
-
-        try:
-            # Apply scale (0.01) - matches Isaac Sim's Scale:unitsResolve
-            scale_op = xformable.AddScaleOp(opSuffix="unitsResolve")
-            scale_op.Set(Gf.Vec3f(0.01, 0.01, 0.01))
-
-            # Apply rotation (90 degrees on X) - matches Isaac Sim's Rotate:unitsResolve
-            rotate_op = xformable.AddRotateXOp(opSuffix="unitsResolve")
-            rotate_op.Set(90.0)
-
-            if self.verbose:
-                print("[LOAD_OBJECT] Applied units resolve: Scale=0.01, RotateX=90 (bird FBX)")
-        except Exception as e:
-            print(f"[LOAD_OBJECT] WARNING: Failed to apply units resolve: {e}")
+        # ... (rest of original method)
+        """
 
     def apply_semantic_labels(self, prim_path):
         """Apply semantic labels based on asset type for instance segmentation."""

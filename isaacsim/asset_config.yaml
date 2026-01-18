@@ -1,0 +1,9 @@
+# Asset specific configurations
+# Key must be the filename of the USD/USDC file
+
+bald-eagle-med-poly.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/bald-eagle-med-poly/bald-eagle-med-poly.usdc"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [90.0, 0.0, 90.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 3.0

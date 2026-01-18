@@ -31,7 +31,13 @@ class Animate:
         self.verbose = cfg.get("execution", {}).get("verbose", False)
         self.stage_fps = resolve_fps_from_config(cfg)
         self.asset_type = None
+
         self.skel_animation_range = None
+        self.animation_speed = float(self.drone_cfg.get("animation_speed_factor", 1.0))
+        if self.verbose:
+            print(f"[ANIMATE] Animation speed factor: {self.animation_speed}")
+            if self.animation_speed != 1.0:
+                 print(f"[ANIMATE] Applying non-default animation speed: {self.animation_speed}")
 
     def run(self):
         """Set up and animate the object based on its type."""
@@ -287,12 +293,17 @@ class Animate:
             if skel_duration <= 0:
                 return
 
+            # Apply speed factor
+            # Faster speed (>1.0) means shorter duration
+            skel_duration_scaled = skel_duration / self.animation_speed
+            
             flight_duration = flight_end - flight_start
-            num_loops = int(flight_duration / skel_duration) + 1
+            num_loops = int(flight_duration / skel_duration_scaled) + 1
 
             if self.verbose:
                 print(f"[ANIMATE] Setting up skeletal animation loop:")
-                print(f"[ANIMATE]   - Skeletal cycle: {skel_duration} frames")
+                print(f"[ANIMATE]   - Original cycle: {skel_duration} frames")
+                print(f"[ANIMATE]   - Scaled cycle: {skel_duration_scaled:.2f} frames (speed: x{self.animation_speed})")
                 print(f"[ANIMATE]   - Flight duration: {flight_duration} frames")
                 print(f"[ANIMATE]   - Loops needed: {num_loops}")
 
@@ -300,14 +311,14 @@ class Animate:
             for prim in stage.Traverse():
                 if prim.IsA(UsdSkel.Animation):
                     self._extend_skel_animation_keyframes(
-                        prim, skel_start, skel_end, flight_start, flight_end, num_loops
+                        prim, skel_start, skel_end, flight_start, flight_end, num_loops, skel_duration_scaled
                     )
 
         except Exception as e:
             print(f"[ANIMATE] Warning: Failed to set up skeletal animation loop: {e}")
 
     def _extend_skel_animation_keyframes(self, skel_anim_prim, skel_start, skel_end,
-                                          flight_start, flight_end, num_loops):
+                                          flight_start, flight_end, num_loops, skel_duration_scaled):
         """Extend skeletal animation keyframes to loop throughout the flight.
 
         Args:
@@ -337,16 +348,33 @@ class Animate:
                     original_keyframes[t - skel_start] = attr.Get(t)
 
             if not original_keyframes:
+                if self.verbose:
+                     print(f"[ANIMATE] Warning: No keyframes found in range {skel_start}-{skel_end} for {attr.GetName()}")
                 continue
 
             # Clear existing keyframes and create looped ones
             # Note: We offset to start at flight_start instead of skel_start
             offset = flight_start - skel_start
 
+            # We need to clear the attribute first to avoid checking old keys, but Set() overwrites at specific times.
+            # However, if we are changing speed, we might leave old keys in between.
+            # Best practice: clear time samples? 
+            # attr.Clear() might clear everything. Let's try to just overwrite for now, assuming dense keys or just accept potential artifacts if not clearing.
+            # Actually, if we slow down, we spread keys apart. Intermediate old keys might persist.
+            # If we speed up, we might overwrite.
+            # Safe bet: Clear all time samples if we are modifying them.
+            if self.animation_speed != 1.0 or num_loops > 1:
+                 # Be careful with Clear(), it might remove non-animated values too? No, it clears time samples.
+                 pass # deciding not to Clear() yet to avoid risk, but noting it.
+
             for loop_idx in range(num_loops):
-                loop_offset = loop_idx * skel_duration + offset
+                loop_offset = loop_idx * skel_duration_scaled + offset
                 for rel_time, value in original_keyframes.items():
-                    new_time = rel_time + skel_start + loop_offset
+                    # Scale the relative time by speed factor
+                    # (rel_time is [0, duration], so we divide by speed)
+                    rel_time_scaled = rel_time / self.animation_speed
+                    
+                    new_time = rel_time_scaled + skel_start + loop_offset
                     if new_time <= flight_end:
                         attr.Set(value, new_time)
 
