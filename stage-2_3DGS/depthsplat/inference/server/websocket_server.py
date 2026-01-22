@@ -102,7 +102,8 @@ class VisualizationConfig:
     orbit_speed_deg_per_sec: float = 15.0
     input_thumbnail_width: int = 192
     input_thumbnail_height: int = 108
-    jpeg_quality: int = 85
+    jpeg_quality: int = 85  # Quality for main render
+    thumbnail_quality: int = 70  # Lower quality for thumbnails/depth (faster)
     max_fps: int = 30
 
 
@@ -427,6 +428,8 @@ def encode_image_to_base64(
     """
     Encode a numpy image array to base64 JPEG.
 
+    Uses TurboJPEG if available (10-20x faster than PIL), falls back to PIL.
+
     Args:
         image: HWC numpy array (RGB or BGR)
         quality: JPEG quality (1-100)
@@ -435,24 +438,49 @@ def encode_image_to_base64(
     Returns:
         Base64 encoded JPEG string
     """
-    if not PIL_AVAILABLE:
-        raise ImportError("PIL required for image encoding")
+    try:
+        import cv2
+        CV2_AVAILABLE = True
+    except ImportError:
+        CV2_AVAILABLE = False
 
-    # Convert to PIL Image
+    # Convert to uint8 if needed
     if image.dtype != np.uint8:
         image = (image * 255).astype(np.uint8)
 
-    pil_image = Image.fromarray(image)
-
-    # Resize if requested
+    # Resize if requested (use cv2 for speed if available)
     if resize:
-        pil_image = pil_image.resize(resize, Image.Resampling.LANCZOS)
+        if CV2_AVAILABLE:
+            image = cv2.resize(image, resize, interpolation=cv2.INTER_AREA)
+        elif PIL_AVAILABLE:
+            pil_image = Image.fromarray(image)
+            pil_image = pil_image.resize(resize, Image.Resampling.LANCZOS)
+            image = np.array(pil_image)
 
-    # Encode to JPEG
+    # Try TurboJPEG first (much faster)
+    try:
+        from turbojpeg import TurboJPEG
+        jpeg = TurboJPEG()
+        # TurboJPEG expects BGR for encoding
+        if image.shape[2] == 3:
+            # Assume input is RGB, convert to BGR for TurboJPEG
+            bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR) if CV2_AVAILABLE else image[:, :, ::-1]
+        else:
+            bgr = image
+        jpeg_bytes = jpeg.encode(bgr, quality=quality)
+        return base64.b64encode(jpeg_bytes).decode("utf-8")
+    except ImportError:
+        pass  # Fall back to PIL
+    except Exception as e:
+        logger.debug(f"TurboJPEG encoding failed, falling back to PIL: {e}")
+
+    # Fallback to PIL
+    if not PIL_AVAILABLE:
+        raise ImportError("PIL required for image encoding")
+
+    pil_image = Image.fromarray(image)
     buffer = BytesIO()
-    pil_image.save(buffer, format="JPEG", quality=quality)
-
-    # Base64 encode
+    pil_image.save(buffer, format="JPEG", quality=quality, optimize=False)  # optimize=False is faster
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
@@ -493,54 +521,63 @@ def create_frame_packet(
     # Track per-column encoding latency
     column_latency = stats.get("column_latency", {})
 
-    def encode_frame_list(frames, convert_bgr=True):
+    def encode_frame_list(frames, convert_bgr=True, resize=None, quality=None):
         """Helper to encode a list of frames to base64."""
+        if not frames:
+            return []
+        if quality is None:
+            quality = config.thumbnail_quality
         result = []
-        for frame in (frames or []):
+        for frame in frames:
             if frame is not None:
                 if convert_bgr and len(frame.shape) == 3 and frame.shape[2] == 3:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 else:
                     rgb = frame
-                b64 = encode_image_to_base64(rgb, config.jpeg_quality, thumbnail_size)
+                b64 = encode_image_to_base64(rgb, quality, resize=resize)
                 result.append(b64)
             else:
                 result.append(None)
         return result
 
-    def timed_encode(frames, convert_bgr=True):
+    def timed_encode(frames, convert_bgr=True, resize=None, quality=None):
         """Helper to encode frames and return (result, time_ms)."""
+        if not frames or all(f is None for f in frames):
+            return [], 0.0
         t0 = time.perf_counter()
-        result = encode_frame_list(frames, convert_bgr)
+        result = encode_frame_list(frames, convert_bgr, resize=resize, quality=quality)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         return result, elapsed_ms
 
-    # Encode input thumbnails
-    inputs, input_encode_ms = timed_encode(input_frames, convert_bgr=True)
+    # Use thumbnail_quality (70) for thumbnails - faster encoding
+    thumbnail_q = config.thumbnail_quality
+
+    # Encode input thumbnails with lower quality for speed
+    inputs, input_encode_ms = timed_encode(input_frames, convert_bgr=True, resize=thumbnail_size, quality=thumbnail_q)
     column_latency["input_ms"] = input_encode_ms
 
-    # Encode cropped frames (one per camera)
-    cropped_b64_list, cropped_encode_ms = timed_encode(cropped_frames, convert_bgr=True)
-    # Add encoding time to existing cropped latency (cropping + encoding)
+    # Encode cropped frames with thumbnail quality - already 256x256
+    cropped_b64_list, cropped_encode_ms = timed_encode(cropped_frames, convert_bgr=True, resize=None, quality=thumbnail_q)
     column_latency["cropped_ms"] = column_latency.get("cropped_ms", 0) + cropped_encode_ms
 
-    # Encode depth and silhouette visualizations (already RGB from colormap)
-    gt_depth_b64, gt_encode_ms = timed_encode(gt_depth_frames, convert_bgr=False)
+    # Encode depth and silhouette visualizations with thumbnail quality
+    # Skip encoding if lists are empty/None
+    gt_depth_b64, gt_encode_ms = timed_encode(gt_depth_frames, convert_bgr=False, resize=None, quality=thumbnail_q)
     column_latency["gt_depth_ms"] = column_latency.get("gt_depth_ms", 0) + gt_encode_ms
 
-    mono_depth_b64, mono_encode_ms = timed_encode(mono_depth_frames, convert_bgr=False)
+    mono_depth_b64, mono_encode_ms = timed_encode(mono_depth_frames, convert_bgr=False, resize=None, quality=thumbnail_q)
     column_latency["mono_depth_ms"] = column_latency.get("mono_depth_ms", 0) + mono_encode_ms
 
-    predicted_depth_b64, pred_encode_ms = timed_encode(predicted_depth_frames, convert_bgr=False)
+    predicted_depth_b64, pred_encode_ms = timed_encode(predicted_depth_frames, convert_bgr=False, resize=None, quality=thumbnail_q)
     column_latency["predicted_depth_ms"] = column_latency.get("predicted_depth_ms", 0) + pred_encode_ms
 
-    silhouette_b64, sil_encode_ms = timed_encode(silhouette_frames, convert_bgr=False)
+    silhouette_b64, sil_encode_ms = timed_encode(silhouette_frames, convert_bgr=False, resize=None, quality=thumbnail_q)
     column_latency["silhouette_ms"] = column_latency.get("silhouette_ms", 0) + sil_encode_ms
 
-    # Encode gaussian render
+    # Encode gaussian render with high quality (this is the main output)
     render_b64 = None
     if gaussian_render is not None:
-        # Assume already RGB
+        # Assume already RGB, use higher quality for main render
         render_b64 = encode_image_to_base64(gaussian_render, config.jpeg_quality)
 
     # Update stats with column latency

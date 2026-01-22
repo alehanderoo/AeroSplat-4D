@@ -73,7 +73,8 @@ class VisualizationPipelineConfig(PipelineConfig):
     orbit_speed_deg_per_sec: float = 15.0
     input_thumbnail_width: int = 192
     input_thumbnail_height: int = 108
-    jpeg_quality: int = 85
+    jpeg_quality: int = 85  # Quality for main render
+    thumbnail_quality: int = 70  # Lower quality for thumbnails/depth (faster encoding)
 
     # Detection service settings
     detection_enabled: bool = True
@@ -115,6 +116,7 @@ class VisualizationPipelineConfig(PipelineConfig):
             input_thumbnail_width=self.input_thumbnail_width,
             input_thumbnail_height=self.input_thumbnail_height,
             jpeg_quality=self.jpeg_quality,
+            thumbnail_quality=self.thumbnail_quality,
         )
 
 
@@ -148,7 +150,7 @@ class VisualizationPipeline(DepthSplatPipeline):
         # Camera calibration service
         self.calibration_service = None
         self._init_calibration_service()
-        
+
         # Ground truth depth service
         self.gt_depth_service = None
         self._init_gt_depth_service()
@@ -161,7 +163,7 @@ class VisualizationPipeline(DepthSplatPipeline):
         self._last_raw_frames: List[np.ndarray] = []
         self._last_gaussians = None
         self._last_crop_regions: List[tuple] = None  # Track crop regions for intrinsics adjustment
-        
+
         # Depth visualization outputs from last inference
         self._last_mono_depth: List[np.ndarray] = []  # Monocular depth per camera
         self._last_predicted_depth: List[np.ndarray] = []  # MVS predicted depth per camera
@@ -170,6 +172,10 @@ class VisualizationPipeline(DepthSplatPipeline):
         # Rendering stats
         self.render_times = []
         self.encode_times = []
+
+        # PERFORMANCE: Mask cache to avoid reading from disk every frame
+        # Key: mask_path, Value: grayscale mask as numpy array
+        self._mask_cache: Dict[str, np.ndarray] = {}
 
     def _init_detection_service(self):
         """Initialize the detection service if configured."""
@@ -235,6 +241,33 @@ class VisualizationPipeline(DepthSplatPipeline):
                 self.gt_depth_service = None
         else:
             logger.info("No GT depth base path configured - GT depth visualization disabled")
+
+    def _load_mask_cached(self, mask_path: str) -> Optional[np.ndarray]:
+        """
+        Load mask with caching to avoid repeated disk reads.
+
+        Args:
+            mask_path: Path to mask file
+
+        Returns:
+            Grayscale mask as numpy array, or None if loading fails
+        """
+        if mask_path in self._mask_cache:
+            return self._mask_cache[mask_path]
+
+        try:
+            import cv2
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            if mask is not None:
+                self._mask_cache[mask_path] = mask
+                # Limit cache size to prevent memory issues
+                if len(self._mask_cache) > 1000:
+                    # Remove oldest entry (FIFO)
+                    self._mask_cache.pop(next(iter(self._mask_cache)))
+            return mask
+        except Exception as e:
+            logger.debug(f"Failed to load mask {mask_path}: {e}")
+            return None
 
     def _init_file_frame_source(self):
         """Initialize file-based frame source if configured."""
@@ -841,7 +874,8 @@ class VisualizationPipeline(DepthSplatPipeline):
             # Apply mask if available (for visualization consistency)
             if detection and detection.mask_path:
                 try:
-                    mask = cv2.imread(detection.mask_path, cv2.IMREAD_GRAYSCALE)
+                    # PERFORMANCE: Use cached mask loading
+                    mask = self._load_mask_cached(detection.mask_path)
                     if mask is not None:
                         if mask.shape[:2] != (h, w):
                             mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
@@ -944,22 +978,23 @@ class VisualizationPipeline(DepthSplatPipeline):
                 # Apply mask if available (Crucial for 3DGS reconstruction!)
                 if detection and detection.mask_path:
                     try:
-                        mask = cv2.imread(detection.mask_path, cv2.IMREAD_GRAYSCALE)
+                        # PERFORMANCE: Use cached mask loading
+                        mask = self._load_mask_cached(detection.mask_path)
                         if mask is not None:
                             # Resize mask to match full frame if needed
                             if mask.shape[:2] != (frame_h, frame_w):
                                 mask = cv2.resize(mask, (frame_w, frame_h), interpolation=cv2.INTER_NEAREST)
-                            
+
                             # Crop mask
                             mask_cropped = mask[y1:y2, x1:x2]
-                            
+
                             # Apply white background where mask is 0
                             # Threshold > 127 is foreground
                             _, fg_mask = cv2.threshold(mask_cropped, 127, 255, cv2.THRESH_BINARY)
-                            
+
                             # Create white background
                             white_bg = np.ones_like(frame_cropped) * 255
-                            
+
                             # Combine (broadcast mask to 3 channels)
                             fg_mask_bool = fg_mask > 0
                             frame_cropped = np.where(fg_mask_bool[..., None], frame_cropped, white_bg).astype(np.uint8)
@@ -1167,6 +1202,10 @@ class VisualizationPipeline(DepthSplatPipeline):
     ):
         """Stream visualization data to connected clients."""
         if self.vis_server is None:
+            return
+
+        # PERFORMANCE: Skip expensive encoding if no clients connected
+        if self.vis_server.connected_clients == 0:
             return
 
         try:
