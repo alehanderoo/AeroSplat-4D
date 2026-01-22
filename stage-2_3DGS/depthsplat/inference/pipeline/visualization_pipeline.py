@@ -412,8 +412,17 @@ class VisualizationPipeline(DepthSplatPipeline):
                     object_position = detections.object_position_3d
                     if object_position is not None:
                         object_position = np.array(object_position, dtype=np.float32)
+                        # CRITICAL FIX: Apply coordinate flip to object position
+                        # The object position from Isaac Sim is in OpenGL coordinates (Y-up, Z-back)
+                        # But the model expects OpenCV coordinates (Y-down, Z-forward)
+                        # We need to flip Y and Z axes to match the camera extrinsics flip
+                        object_position_opencv = object_position.copy()
+                        object_position_opencv[1] *= -1.0  # Flip Y
+                        object_position_opencv[2] *= -1.0  # Flip Z
+                        logger.debug(f"Object position OpenGL: {object_position} -> OpenCV: {object_position_opencv}")
+
                         if self.calibration_service is not None:
-                            self.calibration_service.set_object_position(object_position)
+                            self.calibration_service.set_object_position(object_position_opencv)
 
                 # --- Use GradioReconstructor if available (preferred) ---
                 if self.reconstructor is not None:
@@ -426,12 +435,23 @@ class VisualizationPipeline(DepthSplatPipeline):
 
                     # Get extrinsics from calibration service (already normalized)
                     if self.calibration_service is not None:
+                        # CRITICAL FIX: Don't pass crop_regions to extrinsics
+                        # The Gradio demo uses original (uncropped) extrinsics
+                        # Only the intrinsics are affected by crops (and then overridden)
                         ext_tensor = self.calibration_service.get_extrinsics_tensor(
                             device='cpu',
-                            crop_regions=self._last_crop_regions,
+                            crop_regions=None,  # FIX: Use original extrinsics like Gradio
                             use_virtual_camera=False,
                         )
                         extrinsics_np = ext_tensor[0].numpy()  # [V, 4, 4]
+
+                        # Debug logging to verify camera parameters
+                        logger.debug(f"Extrinsics shape: {extrinsics_np.shape}")
+                        logger.debug(f"Camera positions after normalization:")
+                        for i in range(min(v, 3)):  # Log first 3 cameras
+                            pos = extrinsics_np[i, :3, 3]
+                            dist = np.linalg.norm(pos)
+                            logger.debug(f"  cam_{i+1}: pos={pos}, dist={dist:.3f}")
                     else:
                         # Fallback: create orbit cameras
                         from .reconstruction import create_orbit_extrinsics
@@ -500,9 +520,10 @@ class VisualizationPipeline(DepthSplatPipeline):
                             crop_regions=self._last_crop_regions,
                             use_virtual_camera=False,
                         )
+                        # CRITICAL FIX: Don't pass crop_regions to extrinsics (same as above)
                         extrinsics = self.calibration_service.get_extrinsics_tensor(
                             device=self.device,
-                            crop_regions=self._last_crop_regions,
+                            crop_regions=None,  # FIX: Use original extrinsics
                             use_virtual_camera=False,
                         )
                     else:
@@ -1082,7 +1103,7 @@ class VisualizationPipeline(DepthSplatPipeline):
                 b, v, c, h, w = input_tensor.shape
 
                 # Get camera parameters from calibration service or use defaults
-                # With virtual camera transformation for crop regions
+                # CRITICAL FIX: Don't pass crop_regions to match Gradio demo behavior
                 if self.calibration_service is not None:
                     intrinsics = self.calibration_service.get_intrinsics_tensor(
                         device=self.device,
@@ -1091,7 +1112,7 @@ class VisualizationPipeline(DepthSplatPipeline):
                     )
                     extrinsics = self.calibration_service.get_extrinsics_tensor(
                         device=self.device,
-                        crop_regions=self._last_crop_regions,
+                        crop_regions=None,  # FIX: Use original extrinsics
                         use_virtual_camera=False,
                     )
                 else:
