@@ -728,7 +728,7 @@ class ModelWrapper(LightningModule):
                 caption=batch["scene"],
             )
 
-            # Silhouette visualization: context images, GT masks, predicted silhouettes
+            # Mask visualization: context images, GT masks, estimated masks from rendered color
             if "mask" in batch["context"]:
                 # Render from context viewpoints to compare with context masks
                 context_render = self.decoder.forward(
@@ -741,18 +741,18 @@ class ModelWrapper(LightningModule):
                 )
                 context_rendered = context_render.color[0]  # [V, 3, H, W]
 
-                # Compute predicted silhouette from rendered color
+                # Estimate mask from rendered color (heuristic for visualization)
                 # Detect background color from context images (check corner pixels)
                 bg_sample = batch["context"]["image"][0, :, :, 0, 0].mean()  # Sample corner
                 is_white_bg = bg_sample > 0.5
 
                 if is_white_bg:
                     # White background: alpha = 1 - min(R, G, B)
-                    pred_silhouette = 1.0 - context_rendered.min(dim=1)[0]  # [V, H, W]
+                    pred_mask = 1.0 - context_rendered.min(dim=1)[0]  # [V, H, W]
                 else:
                     # Black background: alpha = max(R, G, B)
-                    pred_silhouette = context_rendered.max(dim=1)[0]  # [V, H, W]
-                pred_silhouette = torch.clamp(pred_silhouette, 0, 1)
+                    pred_mask = context_rendered.max(dim=1)[0]  # [V, H, W]
+                pred_mask = torch.clamp(pred_mask, 0, 1)
 
                 # Get GT masks
                 gt_masks = batch["context"]["mask"][0]  # [V, H, W] or [V, 1, H, W]
@@ -764,16 +764,16 @@ class ModelWrapper(LightningModule):
 
                 # Convert masks to 3-channel for visualization
                 gt_masks_viz = gt_masks.unsqueeze(1).expand(-1, 3, -1, -1)  # [V, 3, H, W]
-                pred_sil_viz = pred_silhouette.unsqueeze(1).expand(-1, 3, -1, -1)  # [V, 3, H, W]
+                pred_mask_viz = pred_mask.unsqueeze(1).expand(-1, 3, -1, -1)  # [V, 3, H, W]
 
-                silhouette_comparison = vcat(
+                mask_comparison = vcat(
                     add_label(hcat(*context_images), "Context Views"),
                     add_label(hcat(*gt_masks_viz), "GT Masks"),
-                    add_label(hcat(*pred_sil_viz), "Predicted Silhouettes"),
+                    add_label(hcat(*pred_mask_viz), "Estimated Masks"),
                 )
                 self.logger.log_image(
-                    "silhouette",
-                    [prep_image(add_border(silhouette_comparison))],
+                    "mask_comparison",
+                    [prep_image(add_border(mask_comparison))],
                     step=self.global_step,
                     caption=batch["scene"],
                 )

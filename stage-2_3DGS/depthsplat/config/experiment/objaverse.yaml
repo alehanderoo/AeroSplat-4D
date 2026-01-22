@@ -13,7 +13,7 @@
 defaults:
   - override /dataset: objaverse # Uses Objaverse-specific dataset loader
   - override /model/encoder: depthsplat # Uses standard DepthSplat encoder
-  - override /loss: [mse, lpips, depth, silhouette] # Active losses: MSE (foreground-masked), LPIPS, Depth supervision, Silhouette (penalizes floaters)
+  - override /loss: [mse, lpips, depth, mask] # Active losses: MSE, LPIPS, Depth supervision, Mask (direct alpha supervision)
 
 wandb:
   name: objaverse_from_scratch # Display name in Weights & Biases
@@ -84,10 +84,9 @@ loss:
     min_depth: 0.52 # Minimum valid depth (matches dataset.near)
     max_depth: 2.54 # Maximum valid depth (matches dataset.far)
     background_weight: 0.1 # Push background depth to far plane (prevents grid artifacts)
-  silhouette:
-    weight: 0.2 # Penalizes Gaussians in background regions (prevents floaters)
-    method: "alpha_from_color" # Estimate opacity from color difference to background
-    background_color: [0.0, 0.0, 0.0] # Black background
+  mask:
+    weight: 0.1 # Direct alpha supervision (LGM/GRM approach)
+    use_bce: false # MSE is standard approach
 
 # Dataset configuration
 dataset:
