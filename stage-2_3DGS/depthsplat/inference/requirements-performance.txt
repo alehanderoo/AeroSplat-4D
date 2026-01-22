@@ -1,0 +1,12 @@
+# Performance optimization dependencies for inference pipeline
+
+# TurboJPEG - 10-20x faster JPEG encoding than PIL
+# System dependency required: libjpeg-turbo8-dev
+# Ubuntu/Debian: sudo apt-get install libjpeg-turbo8-dev
+# macOS: brew install jpeg-turbo
+PyTurboJPEG>=1.7.0
+
+# Already included in main requirements, but listed here for reference:
+# opencv-python>=4.5.0  # For image operations and mask loading
+# Pillow>=9.0.0  # Fallback for JPEG encoding if TurboJPEG unavailable
+# numpy>=1.20.0  # For array operations
