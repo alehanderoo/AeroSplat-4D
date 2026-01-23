@@ -751,6 +751,20 @@ class DepthSplatRunner:
             print("Skipping PLY export (no visualization dump available)")
             ply_path = None
 
+        # Extract and save monocular depth visualizations per input view
+        mono_depth_paths = []
+        if self._visualization_dump and 'mono_depth' in self._visualization_dump:
+            mono_depth = self._visualization_dump['mono_depth']  # [B, V, H, W]
+            mono_depth_np = mono_depth[0].cpu().numpy()  # [V, H, W]
+
+            for view_idx in range(mono_depth_np.shape[0]):
+                mono_d = mono_depth_np[view_idx]  # [H, W]
+                # Visualize using the same colormap as other depth visualizations
+                mono_d_viz = self._apply_depth_colormap_mono(mono_d)
+                mono_path = os.path.join(output_dir, f"mono_depth_view_{view_idx}.png")
+                Image.fromarray(mono_d_viz).save(mono_path)
+                mono_depth_paths.append(mono_path)
+
         return {
             'rendered_images': rendered_np,
             'result_image_path': result_image_path,
@@ -761,6 +775,7 @@ class DepthSplatRunner:
             'video_silhouette_path': video_silhouette_path,
             'ply_path': ply_path,
             'output_dir': output_dir,
+            'mono_depth_paths': mono_depth_paths,
         }
 
     def _apply_depth_colormap(self, depth_normalized: np.ndarray) -> np.ndarray:
@@ -788,6 +803,43 @@ class DepthSplatRunner:
         rgb[..., 1] = np.clip(255 * (1.5 - np.abs(d - 0.5) * 4), 0, 255).astype(np.uint8)
         # Blue channel: peaks at d=0.25
         rgb[..., 2] = np.clip(255 * (1.5 - np.abs(d - 0.25) * 4), 0, 255).astype(np.uint8)
+
+        return rgb
+
+    def _apply_depth_colormap_mono(self, depth: np.ndarray) -> np.ndarray:
+        """
+        Apply a colormap to monocular depth values (residual depth from DPT upsampler).
+
+        The mono_depth represents depth refinement from monocular features and can be
+        positive or negative. We normalize based on percentiles to handle outliers.
+
+        Args:
+            depth: Raw depth values [H, W]
+
+        Returns:
+            RGB image as uint8 array [H, W, 3]
+        """
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+
+        # Normalize using percentiles to handle outliers
+        valid_mask = np.isfinite(depth)
+        if valid_mask.any():
+            d_min = np.percentile(depth[valid_mask], 2)
+            d_max = np.percentile(depth[valid_mask], 98)
+            if d_max > d_min:
+                depth_normalized = (depth - d_min) / (d_max - d_min)
+            else:
+                depth_normalized = np.zeros_like(depth)
+        else:
+            depth_normalized = np.zeros_like(depth)
+
+        depth_normalized = np.clip(depth_normalized, 0, 1)
+
+        # Use plasma colormap (similar to what's used in depth visualization)
+        cmap = cm.get_cmap('plasma')
+        colored = cmap(depth_normalized)
+        rgb = (colored[:, :, :3] * 255).astype(np.uint8)
 
         return rgb
 

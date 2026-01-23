@@ -69,7 +69,7 @@ class GradioRunner:
         enable_video: bool,
         num_video_frames: int,
         cache_dir: str = None,
-    ) -> Tuple[str, str, str, str, str, str, str]:
+    ) -> Tuple[str, str, str, str, str, str, str, List[str]]:
         """
         Run inference using custom target camera.
 
@@ -84,7 +84,8 @@ class GradioRunner:
 
         Returns:
             Tuple of (rendered_image_path, depth_image_path, silhouette_image_path,
-                      video_rgb_path, video_depth_path, video_silhouette_path, ply_path)
+                      video_rgb_path, video_depth_path, video_silhouette_path, ply_path,
+                      mono_depth_paths)
         """
         torch.cuda.empty_cache()
 
@@ -192,6 +193,7 @@ class GradioRunner:
             result['video_depth_path'],
             result['video_silhouette_path'],
             result['ply_path'],
+            result.get('mono_depth_paths', []),
         )
 
     def load_random_example(self, cache_dir: str = None) -> Tuple[List[str], str]:
@@ -359,6 +361,19 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     height=200,
                 )
 
+                # Monocular depth estimations per input view
+                gr.Markdown("### Monocular Depth Refinement (Depth Anything)")
+                mono_depth_gallery = gr.Gallery(
+                    label='Monocular Depth Refinement per Input View (DPT upsampler output)',
+                    type="filepath",
+                    file_types=['image'],
+                    show_label=True,
+                    columns=5,
+                    rows=1,
+                    object_fit='contain',
+                    height=200,
+                )
+
                 # Config section
                 gr.Markdown("### Configuration")
                 with gr.Row():
@@ -502,12 +517,16 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
         def run_inference_wrapper(image_files, azimuth, elevation, distance, video_enabled, n_frames, flight_enabled):
             cache_dir = "/tmp/depthsplat_gradio"
             print(f"[Gradio] Camera state: azimuth={azimuth}, elevation={elevation}, distance={distance}")
-            
+
             # Run standard inference
             result = runner.run_with_custom_camera(
                 image_files, azimuth, elevation, distance, video_enabled, n_frames, cache_dir
             )
-            
+
+            # Unpack result (8 elements: 7 original + mono_depth_paths)
+            (rendered_path, depth_path, silhouette_path, video_rgb, video_depth,
+             video_silhouette, ply_path, mono_depth_paths) = result
+
             # Run flight tracking if enabled
             flight_video = None
             if flight_enabled:
@@ -518,8 +537,18 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     distance=distance,
                     cache_dir="/tmp/depthsplat_flight_tracking",
                 )
-            
-            return result + (flight_video,)
+
+            return (
+                rendered_path,
+                depth_path,
+                silhouette_path,
+                video_rgb,
+                video_depth,
+                video_silhouette,
+                ply_path,
+                mono_depth_paths,  # List of paths for gallery
+                flight_video,
+            )
 
         # Connect the run button
         run_btn.click(
@@ -541,6 +570,7 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                 video_depth,
                 video_silhouette,
                 ply_download,
+                mono_depth_gallery,
                 flight_tracking_video,
             ],
             concurrency_id='default_group',
