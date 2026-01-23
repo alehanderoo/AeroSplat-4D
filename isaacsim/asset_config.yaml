@@ -1,9 +1,257 @@
 # Asset specific configurations
 # Key must be the filename of the USD/USDC file
+# all assets are normalized to 1m wingspan at scale=1 and 1 flap per loop at animation_speed_factor=1
+# birds facing forward in blender with nose in positive x axis. wingspan is along y axis
 
+
+# Birds
 bald-eagle-med-poly.usdc:
   usd_path: "/home/sandro/aeroSplat-4D/assets/birds/bald-eagle-med-poly/bald-eagle-med-poly.usdc"
+  type: "bird"
   translation: [0.0, 0.0, 0.0]
-  orientation: [90.0, 0.0, 90.0]
+  orientation: [0.0, 0.0, 0.0]
   scale: [1.0, 1.0, 1.0]
-  animation_speed_factor: 3.0
+  animation_speed_factor: 1.0
+
+Crow - Hello Neighbor 2.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/Crow-HelloNeighbor2/Crow - Hello Neighbor 2.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+20 Owl_merged.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/Day 20 - Snowy Owl/20 Owl_merged.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 90.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+Grus-nigricollis.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/Grus-nigricollis/Grus-nigricollis.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 90.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+Paloma_animada.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/Paloma_animada/Paloma_animada.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, -90.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+# does not work
+Quetzal Animation.fbx:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/Quetzal-Animation/Quetzal Animation.fbx"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+cacao.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/cacao/cacao.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+crow-fly.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/crow-fly/crow-fly.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, -90.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+dove-bird-rigged.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/dove-bird-rigged/dove-bird-rigged.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 90.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+dragon-flying.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/dragon-flying/dragon-flying.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+dragon-flying-cycle.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/dragon-flying-cycle/dragon-flying-cycle.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 90.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+dragon-flying-test.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/dragon-flying-test/dragon-flying-test.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 90.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+fire-fragon.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/fire-dragon/fire-fragon.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 90.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+KingFisher.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/kingfisher/KingFisher.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+
+owl.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/owl/owl.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+parrot.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/parrot/parrot.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+phoenix.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/phoenix/phoenix.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+pigeon.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/pigeon/pigeon.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+Seagull.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/seagull/Seagull.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+shadow-dragon.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/shadow-dragon/shadow-dragon.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+snow-dragon.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/snow-dragon/snow-dragon.usdc"
+  type: "bird"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+# Drones
+Low-poly FPV.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/FPV-Low-Poly/Low-poly FPV.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+FPV-drone.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/FPV-drone/FPV-drone.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+FPV-drone-with-a.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/FPV-drone-with-a/FPV-drone-with-a.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+Race Drone - Hunter.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/Race-Drone-Hunter/Race Drone - Hunter.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+Race Drone - Scout.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/Race-Drone-Scout/Race Drone - Scout.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+DJI Inspire 2.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-inspire-2/DJI Inspire 2.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+DJI Inspire 3.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-inspire-3/DJI Inspire 3.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+quadcopter-dji-matrice-300-rtk.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-matrice-300/quadcopter-dji-matrice-300-rtk.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+dji-mavic-2.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-mavic-2/dji-mavic-2.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+Dji Mavic 3 Classic Drone.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-mavic-3-classic-drone/Dji Mavic 3 Classic Drone.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0

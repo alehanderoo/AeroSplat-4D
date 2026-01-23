@@ -71,7 +71,20 @@ cameras:
 # =====================================================================
 drone:
   # Asset to use (must match a key in asset_config.yaml)
-  asset_name: "bald-eagle-med-poly.usdc"
+  # asset_name: "bald-eagle-med-poly.usdc"
+  # asset_name: "Crow - Hello Neighbor 2.usdc"
+  # asset_name: "20 Owl_merged.usdc"
+  # asset_name: "Grus-nigricollis.usdc"
+  # asset_name: "Paloma_animada.usdc"
+  # asset_name: "Quetzal Animation.fbx" # does not work
+  # asset_name: "cacao.usdc"
+  # asset_name: "crow-fly.usdc"
+  # asset_name: "dove-bird-rigged.usdc"
+  # asset_name: "dragon-flying-cycle.usdc"
+  # asset_name: "dragon-flying-test.usdc"
+  # asset_name: "fire-fragon.usdc"
+
+  asset_name: "snow-dragon.usdc"
   
   # Path to the object USD/FBX file to load
   # Asset type is auto-detected from the file path (keywords: bird, eagle, drone, etc.)
@@ -97,6 +110,17 @@ drone:
   # Wrap drone with a mover parent prim (avoids modifying original asset)
   wrap_with_mover: true
   mover_prim_path: "/World/DroneMover"
+
+  # Bird-specific parameters (only apply when asset type is "bird")
+  # Assets are normalized to: 1m wingspan at scale=1, 1 flap per animation loop
+  # These override scale and animation_speed_factor from asset_config.yaml
+  bird_parameters:
+    # Target wingspan in meters. Directly sets uniform scale (wingspan=2 -> scale=[2,2,2])
+    # Set to 0 or null to use asset_config.yaml scale instead
+    wingspan: 1.0
+    # Target wing flaps per second (Hz). Directly sets animation_speed_factor
+    # Set to 0 or null to use asset_config.yaml animation_speed_factor instead
+    flap_frequency: 1.0
   
   # Animation timeline settings
   timeline:

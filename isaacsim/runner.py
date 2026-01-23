@@ -240,11 +240,57 @@ def load_config(config_path=None):
                 print(f"[RUNNER] ERROR: Failed to parse asset_config.yaml: {e}")
         else:
              print(f"[RUNNER] Warning: asset_config.yaml not found at {asset_config_path}")
-        
+
+        # Calculate bird-specific parameters (wingspan -> scale, flap_frequency -> animation_speed_factor)
+        cfg = _apply_bird_parameters(cfg)
+
         return cfg
     except Exception as e:
         print(f"[RUNNER] ERROR: Failed to parse config.yaml: {e}")
         return None
+
+
+def _apply_bird_parameters(cfg):
+    """Apply wingspan and flap_frequency for birds.
+
+    For birds (type="bird"), this maps intuitive parameters directly:
+    - wingspan (meters) -> uniform scale (assets normalized to 1m wingspan at scale=1)
+    - flap_frequency (Hz) -> animation_speed_factor (assets normalized to 1 flap per loop)
+
+    If wingspan or flap_frequency is 0 or null, the raw scale/animation_speed_factor
+    from asset_config.yaml is used instead.
+    """
+    drone_cfg = cfg.get("drone", {})
+    asset_type = drone_cfg.get("type")
+
+    # Only apply to birds
+    if asset_type != "bird":
+        return cfg
+
+    bird_params = drone_cfg.get("bird_parameters", {})
+    target_wingspan = bird_params.get("wingspan")
+    target_flap_freq = bird_params.get("flap_frequency")
+
+    # Apply wingspan as direct scale (assets normalized to 1m wingspan at scale=1)
+    if target_wingspan is not None and target_wingspan > 0:
+        drone_cfg["scale"] = [target_wingspan, target_wingspan, target_wingspan]
+        print(f"[RUNNER] Bird wingspan: {target_wingspan}m -> scale=[{target_wingspan}, {target_wingspan}, {target_wingspan}]")
+    else:
+        # Use scale from asset_config.yaml
+        scale = drone_cfg.get("scale", [1.0, 1.0, 1.0])
+        print(f"[RUNNER] Bird using asset_config scale: {scale}")
+
+    # Apply flap_frequency as direct animation_speed_factor (assets normalized to 1 flap per loop)
+    if target_flap_freq is not None and target_flap_freq > 0:
+        drone_cfg["animation_speed_factor"] = target_flap_freq
+        print(f"[RUNNER] Bird flap frequency: {target_flap_freq}Hz -> animation_speed_factor={target_flap_freq}")
+    else:
+        # Use animation_speed_factor from asset_config.yaml
+        speed = drone_cfg.get("animation_speed_factor", 1.0)
+        print(f"[RUNNER] Bird using asset_config animation_speed_factor: {speed}")
+
+    cfg["drone"] = drone_cfg
+    return cfg
 
 
 # =====================================================================
