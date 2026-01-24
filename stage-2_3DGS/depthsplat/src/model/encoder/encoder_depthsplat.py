@@ -343,9 +343,12 @@ class EncoderDepthSplat(Encoder[EncoderDepthSplatCfg]):
             visualization_dump["rotations"] = rearrange(
                 gaussians.rotations, "b v r srf spp xyzw -> b (v r srf spp) xyzw"
             )
-            # Add monocular depth (DPT upsampler output) if available
+            # Add monocular depth residual (DPT upsampler output) if available
             if "mono_depth" in results_dict:
                 visualization_dump["mono_depth"] = results_dict["mono_depth"]
+            # Add coarse cost-volume depth (before DPT upsampling) if available
+            if "coarse_mv_depth" in results_dict:
+                visualization_dump["coarse_mv_depth"] = results_dict["coarse_mv_depth"]
 
         gaussians = Gaussians(
             rearrange(

@@ -581,9 +581,15 @@ class MultiViewUniMatch(nn.Module):
                 
                 # Store monocular depth component (DPT upsampler output)
                 # This represents the depth refinement from monocular features
-                mono_depth = residual_depth.squeeze(1)  # [BV, H, W]
-                mono_depth = rearrange(mono_depth, "(b v) ... -> b v ...", b=b, v=v)  # [B, V, H, W]
-                results_dict.update({"mono_depth": mono_depth})
+                mono_depth_residual = residual_depth.squeeze(1)  # [BV, H, W]
+                mono_depth_residual = rearrange(mono_depth_residual, "(b v) ... -> b v ...", b=b, v=v)  # [B, V, H, W]
+                results_dict.update({"mono_depth": mono_depth_residual})
+
+                # Store coarse cost-volume depth (before DPT upsampling)
+                # This is the multi-view stereo result at 1/8 resolution, bilinearly upsampled
+                coarse_mv_depth = depth_bilinear.squeeze(1)  # [BV, H, W]
+                coarse_mv_depth = rearrange(coarse_mv_depth, "(b v) ... -> b v ...", b=b, v=v)  # [B, V, H, W]
+                results_dict.update({"coarse_mv_depth": coarse_mv_depth})
 
                 depth_preds.append(depth)
 
