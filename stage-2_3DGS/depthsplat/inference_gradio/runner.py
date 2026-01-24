@@ -2,13 +2,18 @@
 DepthSplat Runner for Gradio Demo.
 
 Handles model loading and inference for the Gradio interface.
+Includes depth analysis functionality for comparing:
+- Standalone Depth Anything V2 (monocular)
+- Coarse cost-volume depth (multi-view stereo)
+- DPT residual (learned refinement)
+- Final fused depth
 """
 
 import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 
 import numpy as np
 import torch
@@ -19,6 +24,7 @@ from omegaconf import OmegaConf, DictConfig
 import hydra
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
+import matplotlib.cm as cm
 
 # Add the parent directory to path for imports
 DEPTHSPLAT_ROOT = Path(__file__).parent.parent
@@ -42,6 +48,227 @@ from camera_utils import normalize_intrinsics
 # Wild frames have fx_norm~7.6 (7.5° FOV) due to cropping from high-res telephoto cameras
 # Using training-matched intrinsics improves generalization
 TRAINING_FX_NORM = 1.0723
+
+
+class DepthAnythingV2Wrapper:
+    """
+    Wrapper for standalone Depth Anything V2 inference.
+
+    This runs the pretrained monocular depth model independently of the
+    DepthSplat pipeline to evaluate raw monocular depth quality.
+    """
+
+    def __init__(self, model_type: str = "vitb", device: str = "cuda"):
+        """
+        Initialize Depth Anything V2 model.
+
+        Args:
+            model_type: Model variant ('vits', 'vitb', 'vitl')
+            device: Device to run inference on
+        """
+        self.device = device
+        self.model_type = model_type
+        self.model = None
+
+        # Model configurations
+        self.model_configs = {
+            'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
+            'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
+            'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+        }
+
+    def _load_model(self):
+        """Lazy load the model on first use."""
+        if self.model is not None:
+            return
+
+        print(f"Loading Depth Anything V2 ({self.model_type})...")
+
+        # Try to import from the Depth-Anything-V2 repo
+        depth_anything_path = DEPTHSPLAT_ROOT.parent / "Depth-Anything-V2"
+        if depth_anything_path.exists():
+            if str(depth_anything_path) not in sys.path:
+                sys.path.insert(0, str(depth_anything_path))
+
+            from depth_anything_v2.dpt import DepthAnythingV2
+
+            self.model = DepthAnythingV2(**self.model_configs[self.model_type])
+
+            # Load pretrained weights
+            weight_path = DEPTHSPLAT_ROOT / "pretrained" / f"depth_anything_v2_{self.model_type}.pth"
+            if weight_path.exists():
+                self.model.load_state_dict(torch.load(weight_path, map_location='cpu'))
+                print(f"  Loaded weights from {weight_path}")
+            else:
+                print(f"  Warning: Weights not found at {weight_path}")
+
+            self.model = self.model.to(self.device).eval()
+        else:
+            print(f"  Warning: Depth-Anything-V2 not found at {depth_anything_path}")
+            self.model = None
+
+    @torch.no_grad()
+    def infer(self, images: List[np.ndarray]) -> List[np.ndarray]:
+        """
+        Run depth estimation on a list of images.
+
+        Args:
+            images: List of RGB images as numpy arrays [H, W, 3] in uint8
+
+        Returns:
+            List of depth maps as numpy arrays [H, W]
+        """
+        self._load_model()
+
+        if self.model is None:
+            return [np.zeros((img.shape[0], img.shape[1])) for img in images]
+
+        depths = []
+        for img in images:
+            # The model expects uint8 RGB images
+            depth = self.model.infer_image(img)
+            depths.append(depth)
+
+        return depths
+
+
+def compute_depth_metrics(
+    pred: np.ndarray,
+    gt: np.ndarray,
+    mask: Optional[np.ndarray] = None,
+) -> Dict[str, float]:
+    """
+    Compute depth estimation metrics.
+
+    Args:
+        pred: Predicted depth [H, W]
+        gt: Ground truth depth [H, W]
+        mask: Optional validity mask [H, W]
+
+    Returns:
+        Dictionary of metrics:
+        - abs_rel: Absolute relative error
+        - sq_rel: Squared relative error
+        - rmse: Root mean squared error
+        - rmse_log: RMSE in log space
+        - delta1: % of pixels with max(pred/gt, gt/pred) < 1.25
+        - delta2: % of pixels with threshold < 1.25^2
+        - delta3: % of pixels with threshold < 1.25^3
+    """
+    if mask is None:
+        mask = (gt > 0) & np.isfinite(gt) & np.isfinite(pred) & (pred > 0)
+    else:
+        mask = mask & (gt > 0) & np.isfinite(gt) & np.isfinite(pred) & (pred > 0)
+
+    if mask.sum() == 0:
+        return {
+            'abs_rel': float('nan'),
+            'sq_rel': float('nan'),
+            'rmse': float('nan'),
+            'rmse_log': float('nan'),
+            'delta1': float('nan'),
+            'delta2': float('nan'),
+            'delta3': float('nan'),
+        }
+
+    pred_m = pred[mask]
+    gt_m = gt[mask]
+
+    # Absolute relative error
+    abs_rel = np.mean(np.abs(pred_m - gt_m) / gt_m)
+
+    # Squared relative error
+    sq_rel = np.mean(((pred_m - gt_m) ** 2) / gt_m)
+
+    # RMSE
+    rmse = np.sqrt(np.mean((pred_m - gt_m) ** 2))
+
+    # RMSE log
+    rmse_log = np.sqrt(np.mean((np.log(pred_m) - np.log(gt_m)) ** 2))
+
+    # Delta thresholds
+    thresh = np.maximum(pred_m / gt_m, gt_m / pred_m)
+    delta1 = np.mean(thresh < 1.25) * 100
+    delta2 = np.mean(thresh < 1.25 ** 2) * 100
+    delta3 = np.mean(thresh < 1.25 ** 3) * 100
+
+    return {
+        'abs_rel': float(abs_rel),
+        'sq_rel': float(sq_rel),
+        'rmse': float(rmse),
+        'rmse_log': float(rmse_log),
+        'delta1': float(delta1),
+        'delta2': float(delta2),
+        'delta3': float(delta3),
+    }
+
+
+def scale_and_shift_pred(
+    pred: np.ndarray,
+    gt: np.ndarray,
+    mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """
+    Apply least-squares scale and shift to align predicted depth with GT.
+
+    This is useful for monocular depth which has scale ambiguity.
+    Solves: pred_aligned = scale * pred + shift to minimize ||pred_aligned - gt||^2
+
+    Args:
+        pred: Predicted depth [H, W]
+        gt: Ground truth depth [H, W]
+        mask: Optional validity mask
+
+    Returns:
+        Scale-and-shift aligned prediction
+    """
+    if mask is None:
+        mask = (gt > 0) & np.isfinite(gt) & np.isfinite(pred)
+
+    if mask.sum() < 2:
+        return pred
+
+    pred_m = pred[mask].flatten()
+    gt_m = gt[mask].flatten()
+
+    # Solve [pred, 1] @ [scale, shift]^T = gt via least squares
+    A = np.stack([pred_m, np.ones_like(pred_m)], axis=1)
+    x, _, _, _ = np.linalg.lstsq(A, gt_m, rcond=None)
+    scale, shift = x
+
+    return pred * scale + shift
+
+
+def apply_colormap(depth: np.ndarray, cmap_name: str = 'plasma') -> np.ndarray:
+    """
+    Apply a matplotlib colormap to a depth map.
+
+    Args:
+        depth: Depth values [H, W]
+        cmap_name: Colormap name
+
+    Returns:
+        RGB image [H, W, 3] as uint8
+    """
+    # Normalize using percentiles
+    valid = np.isfinite(depth) & (depth > 0)
+    if valid.any():
+        d_min = np.percentile(depth[valid], 2)
+        d_max = np.percentile(depth[valid], 98)
+        if d_max > d_min:
+            depth_norm = (depth - d_min) / (d_max - d_min)
+        else:
+            depth_norm = np.zeros_like(depth)
+    else:
+        depth_norm = np.zeros_like(depth)
+
+    depth_norm = np.clip(depth_norm, 0, 1)
+
+    cmap = cm.get_cmap(cmap_name)
+    colored = cmap(depth_norm)
+    rgb = (colored[:, :, :3] * 255).astype(np.uint8)
+
+    return rgb
 
 # Target object coverage in the cropped frame (75% = object fills 75% of frame)
 TARGET_OBJECT_COVERAGE = 0.75
@@ -210,6 +437,13 @@ class DepthSplatRunner:
         self.near = self.cfg.dataset.near
         self.far = self.cfg.dataset.far
         self.background_color = self.cfg.dataset.background_color
+
+        # Initialize standalone Depth Anything V2 for depth analysis
+        # Uses same model type as the encoder's monocular branch
+        self.depth_anything = DepthAnythingV2Wrapper(
+            model_type=self.cfg.model.encoder.monodepth_vit_type,
+            device=device,
+        )
 
         print("Model loaded successfully!")
 
@@ -751,19 +985,12 @@ class DepthSplatRunner:
             print("Skipping PLY export (no visualization dump available)")
             ply_path = None
 
-        # Extract and save monocular depth visualizations per input view
-        mono_depth_paths = []
-        if self._visualization_dump and 'mono_depth' in self._visualization_dump:
-            mono_depth = self._visualization_dump['mono_depth']  # [B, V, H, W]
-            mono_depth_np = mono_depth[0].cpu().numpy()  # [V, H, W]
-
-            for view_idx in range(mono_depth_np.shape[0]):
-                mono_d = mono_depth_np[view_idx]  # [H, W]
-                # Visualize using the same colormap as other depth visualizations
-                mono_d_viz = self._apply_depth_colormap_mono(mono_d)
-                mono_path = os.path.join(output_dir, f"mono_depth_view_{view_idx}.png")
-                Image.fromarray(mono_d_viz).save(mono_path)
-                mono_depth_paths.append(mono_path)
+        # === DEPTH ANALYSIS: Extract and visualize all 4 depth types ===
+        depth_analysis = self._compute_depth_analysis(
+            images=images,
+            visualization_dump=self._visualization_dump,
+            output_dir=output_dir,
+        )
 
         return {
             'rendered_images': rendered_np,
@@ -775,7 +1002,222 @@ class DepthSplatRunner:
             'video_silhouette_path': video_silhouette_path,
             'ply_path': ply_path,
             'output_dir': output_dir,
-            'mono_depth_paths': mono_depth_paths,
+            'mono_depth_paths': depth_analysis.get('residual_paths', []),  # Backward compat
+            'depth_analysis': depth_analysis,
+        }
+
+    def _compute_depth_analysis(
+        self,
+        images: List[np.ndarray],
+        visualization_dump: dict,
+        output_dir: str,
+    ) -> dict:
+        """
+        Compute comprehensive depth analysis with all 4 depth types.
+
+        Args:
+            images: Input images [V, H, W, 3]
+            visualization_dump: Dictionary from encoder containing depth tensors
+            output_dir: Directory to save visualizations
+
+        Returns:
+            Dictionary containing:
+            - standalone_da_paths: Paths to standalone Depth Anything V2 visualizations
+            - coarse_mv_paths: Paths to coarse cost-volume depth visualizations
+            - residual_paths: Paths to DPT residual visualizations
+            - final_fused_paths: Paths to final fused depth visualizations
+            - gt_paths: Paths to GT depth visualizations (if available)
+            - metrics: Per-view metrics comparing each depth type to GT
+        """
+        depth_dir = os.path.join(output_dir, "depth_analysis")
+        os.makedirs(depth_dir, exist_ok=True)
+
+        num_views = len(images)
+        result = {
+            'standalone_da_paths': [],
+            'coarse_mv_paths': [],
+            'residual_paths': [],
+            'final_fused_paths': [],
+            'gt_paths': [],
+            'metrics': {},
+        }
+
+        # 1. Run standalone Depth Anything V2 on input images
+        print("Running standalone Depth Anything V2...")
+        standalone_depths = self.depth_anything.infer(images)
+
+        for i, depth in enumerate(standalone_depths):
+            viz = apply_colormap(depth, 'plasma')
+            path = os.path.join(depth_dir, f"standalone_da_view_{i}.png")
+            Image.fromarray(viz).save(path)
+            result['standalone_da_paths'].append(path)
+
+        # 2. Extract coarse cost-volume depth (multi-view stereo result)
+        coarse_mv_depths = []
+        if visualization_dump and 'coarse_mv_depth' in visualization_dump:
+            coarse_mv = visualization_dump['coarse_mv_depth'][0].cpu().numpy()  # [V, H, W]
+            for i in range(coarse_mv.shape[0]):
+                # Convert from inverse depth to depth
+                depth = 1.0 / np.clip(coarse_mv[i], 1e-6, None)
+                coarse_mv_depths.append(depth)
+                viz = apply_colormap(depth, 'plasma')
+                path = os.path.join(depth_dir, f"coarse_mv_view_{i}.png")
+                Image.fromarray(viz).save(path)
+                result['coarse_mv_paths'].append(path)
+
+        # 3. Extract DPT residual (monocular refinement)
+        residual_depths = []
+        if visualization_dump and 'mono_depth' in visualization_dump:
+            residual = visualization_dump['mono_depth'][0].cpu().numpy()  # [V, H, W]
+            for i in range(residual.shape[0]):
+                residual_depths.append(residual[i])
+                # Residual can be positive/negative, use diverging colormap
+                viz = apply_colormap(residual[i], 'coolwarm')
+                path = os.path.join(depth_dir, f"residual_view_{i}.png")
+                Image.fromarray(viz).save(path)
+                result['residual_paths'].append(path)
+
+        # 4. Compute final fused depth (coarse + residual)
+        final_fused_depths = []
+        if visualization_dump and 'depth' in visualization_dump:
+            # depth in visualization_dump is [B, V, H, W, 1, 1] inverse depth
+            fused = visualization_dump['depth'][0].squeeze(-1).squeeze(-1).cpu().numpy()  # [V, H, W]
+            for i in range(fused.shape[0]):
+                # Convert from inverse depth to depth
+                depth = 1.0 / np.clip(fused[i], 1e-6, None)
+                final_fused_depths.append(depth)
+                viz = apply_colormap(depth, 'plasma')
+                path = os.path.join(depth_dir, f"final_fused_view_{i}.png")
+                Image.fromarray(viz).save(path)
+                result['final_fused_paths'].append(path)
+
+        # 5. Load GT depth if available (for wild frames from Isaac Sim)
+        gt_depths = self._load_gt_depths(num_views)
+        if gt_depths:
+            for i, gt_depth in enumerate(gt_depths):
+                viz = apply_colormap(gt_depth, 'plasma')
+                path = os.path.join(depth_dir, f"gt_view_{i}.png")
+                Image.fromarray(viz).save(path)
+                result['gt_paths'].append(path)
+
+            # 6. Compute metrics comparing each depth type to GT
+            result['metrics'] = self._compute_all_metrics(
+                standalone_depths=standalone_depths,
+                coarse_mv_depths=coarse_mv_depths,
+                final_fused_depths=final_fused_depths,
+                gt_depths=gt_depths,
+            )
+
+        return result
+
+    def _load_gt_depths(self, num_views: int) -> Optional[List[np.ndarray]]:
+        """
+        Load ground truth depth maps for wild frames.
+
+        Returns:
+            List of GT depth arrays, or None if not available
+        """
+        if not hasattr(self, 'current_example') or self.current_example is None:
+            return None
+
+        render_dir = self.current_example.get('render_dir')
+        if render_dir is None:
+            return None
+
+        # Check if this is a wild frame with GT depth
+        key = self.current_example.get('key', '')
+        if not key.startswith('wild_'):
+            return None
+
+        frame_id = int(key.replace('wild_', ''))
+        render_dir = Path(render_dir)
+
+        gt_depths = []
+        cam_names = sorted([d.name for d in render_dir.iterdir() if d.is_dir() and d.name.startswith('cam_')])
+
+        for cam_name in cam_names[:num_views]:
+            depth_path = render_dir / cam_name / "depth" / f"distance_to_image_plane_{frame_id:04d}.npy"
+            if depth_path.exists():
+                gt_depth = np.load(depth_path)
+                # Resize to match model output (256x256)
+                if gt_depth.shape != (256, 256):
+                    from scipy.ndimage import zoom
+                    scale = (256 / gt_depth.shape[0], 256 / gt_depth.shape[1])
+                    gt_depth = zoom(gt_depth, scale, order=1)
+                gt_depths.append(gt_depth)
+            else:
+                return None  # If any camera is missing, skip GT comparison
+
+        return gt_depths if len(gt_depths) == num_views else None
+
+    def _compute_all_metrics(
+        self,
+        standalone_depths: List[np.ndarray],
+        coarse_mv_depths: List[np.ndarray],
+        final_fused_depths: List[np.ndarray],
+        gt_depths: List[np.ndarray],
+    ) -> dict:
+        """
+        Compute depth metrics for all depth types vs GT.
+
+        Returns:
+            Dictionary with metrics per depth type, averaged across views
+        """
+        metrics = {
+            'standalone_da': {'raw': [], 'aligned': []},
+            'coarse_mv': {'raw': [], 'aligned': []},
+            'final_fused': {'raw': [], 'aligned': []},
+        }
+
+        for i, gt in enumerate(gt_depths):
+            # Standalone Depth Anything V2
+            if i < len(standalone_depths):
+                pred = standalone_depths[i]
+                # Resize pred to match GT if needed
+                if pred.shape != gt.shape:
+                    from scipy.ndimage import zoom
+                    scale = (gt.shape[0] / pred.shape[0], gt.shape[1] / pred.shape[1])
+                    pred = zoom(pred, scale, order=1)
+                metrics['standalone_da']['raw'].append(compute_depth_metrics(pred, gt))
+                pred_aligned = scale_and_shift_pred(pred, gt)
+                metrics['standalone_da']['aligned'].append(compute_depth_metrics(pred_aligned, gt))
+
+            # Coarse MV depth
+            if i < len(coarse_mv_depths):
+                pred = coarse_mv_depths[i]
+                if pred.shape != gt.shape:
+                    from scipy.ndimage import zoom
+                    scale = (gt.shape[0] / pred.shape[0], gt.shape[1] / pred.shape[1])
+                    pred = zoom(pred, scale, order=1)
+                metrics['coarse_mv']['raw'].append(compute_depth_metrics(pred, gt))
+                pred_aligned = scale_and_shift_pred(pred, gt)
+                metrics['coarse_mv']['aligned'].append(compute_depth_metrics(pred_aligned, gt))
+
+            # Final fused depth
+            if i < len(final_fused_depths):
+                pred = final_fused_depths[i]
+                if pred.shape != gt.shape:
+                    from scipy.ndimage import zoom
+                    scale = (gt.shape[0] / pred.shape[0], gt.shape[1] / pred.shape[1])
+                    pred = zoom(pred, scale, order=1)
+                metrics['final_fused']['raw'].append(compute_depth_metrics(pred, gt))
+                pred_aligned = scale_and_shift_pred(pred, gt)
+                metrics['final_fused']['aligned'].append(compute_depth_metrics(pred_aligned, gt))
+
+        # Average metrics across views
+        def avg_metrics(metric_list):
+            if not metric_list:
+                return {}
+            keys = metric_list[0].keys()
+            return {k: np.mean([m[k] for m in metric_list if not np.isnan(m[k])]) for k in keys}
+
+        return {
+            'standalone_da_raw': avg_metrics(metrics['standalone_da']['raw']),
+            'standalone_da_aligned': avg_metrics(metrics['standalone_da']['aligned']),
+            'coarse_mv_raw': avg_metrics(metrics['coarse_mv']['raw']),
+            'coarse_mv_aligned': avg_metrics(metrics['coarse_mv']['aligned']),
+            'final_fused_raw': avg_metrics(metrics['final_fused']['raw']),
+            'final_fused_aligned': avg_metrics(metrics['final_fused']['aligned']),
         }
 
     def _apply_depth_colormap(self, depth_normalized: np.ndarray) -> np.ndarray:

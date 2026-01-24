@@ -185,6 +185,9 @@ class GradioRunner:
             num_video_frames=actual_video_frames,
         )
 
+        # Store depth analysis for access by wrapper
+        self.runner._last_depth_analysis = result.get('depth_analysis', {})
+
         return (
             result['result_image_path'],
             result['depth_image_path'],
@@ -482,6 +485,85 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     label='Download PLY file',
                 )
 
+        # ============================================================
+        # DEPTH ANALYSIS SECTION
+        # ============================================================
+        gr.Markdown("---")
+        gr.Markdown("## Depth Analysis: Monocular vs Multi-View")
+        gr.Markdown("""
+        Compare depth estimation methods to evaluate if finetuning the monocular model would help:
+        - **Standalone DA V2**: Pure monocular depth from Depth Anything V2 (like in the notebook)
+        - **Coarse MV Depth**: Multi-view stereo from cost volume matching (1/8 res, upsampled)
+        - **DPT Residual**: Learned refinement from monocular features (positive=closer, negative=farther)
+        - **Final Fused**: Combined depth (coarse + residual) used for 3D reconstruction
+        - **Ground Truth**: Available for Isaac Sim wild frames
+        """)
+
+        with gr.Row():
+            with gr.Column(scale=1):
+                gr.Markdown("### Standalone Depth Anything V2")
+                standalone_da_gallery = gr.Gallery(
+                    label='Monocular depth (same as notebook)',
+                    type="filepath",
+                    columns=5,
+                    rows=1,
+                    object_fit='contain',
+                    height=180,
+                )
+
+            with gr.Column(scale=1):
+                gr.Markdown("### Coarse MV Depth (Cost Volume)")
+                coarse_mv_gallery = gr.Gallery(
+                    label='Multi-view stereo result',
+                    type="filepath",
+                    columns=5,
+                    rows=1,
+                    object_fit='contain',
+                    height=180,
+                )
+
+        with gr.Row():
+            with gr.Column(scale=1):
+                gr.Markdown("### DPT Residual (Monocular Refinement)")
+                residual_gallery = gr.Gallery(
+                    label='Learned depth correction',
+                    type="filepath",
+                    columns=5,
+                    rows=1,
+                    object_fit='contain',
+                    height=180,
+                )
+
+            with gr.Column(scale=1):
+                gr.Markdown("### Final Fused Depth")
+                final_fused_gallery = gr.Gallery(
+                    label='Coarse + Residual (used for 3D)',
+                    type="filepath",
+                    columns=5,
+                    rows=1,
+                    object_fit='contain',
+                    height=180,
+                )
+
+        with gr.Row():
+            with gr.Column(scale=1):
+                gr.Markdown("### Ground Truth Depth (Isaac Sim)")
+                gt_depth_gallery = gr.Gallery(
+                    label='GT depth (wild frames only)',
+                    type="filepath",
+                    columns=5,
+                    rows=1,
+                    object_fit='contain',
+                    height=180,
+                )
+
+            with gr.Column(scale=1):
+                gr.Markdown("### Depth Quality Metrics")
+                metrics_display = gr.JSON(
+                    label='Metrics vs GT (lower is better for errors, higher for delta)',
+                    value={},
+                )
+
         # Initialize demo
         demo.load(fn=None, inputs=None, outputs=None)
 
@@ -538,6 +620,27 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     cache_dir="/tmp/depthsplat_flight_tracking",
                 )
 
+            # Extract depth analysis results from runner
+            depth_analysis = runner.runner._last_depth_analysis if hasattr(runner.runner, '_last_depth_analysis') else {}
+
+            # Format metrics for display
+            raw_metrics = depth_analysis.get('metrics', {})
+            formatted_metrics = {}
+            if raw_metrics:
+                # Format each depth type's metrics
+                for key in ['standalone_da_aligned', 'coarse_mv_aligned', 'final_fused_aligned']:
+                    if key in raw_metrics and raw_metrics[key]:
+                        m = raw_metrics[key]
+                        name = key.replace('_aligned', '').replace('_', ' ').title()
+                        formatted_metrics[name] = {
+                            'AbsRel': f"{m.get('abs_rel', 0):.4f}",
+                            'RMSE': f"{m.get('rmse', 0):.3f}",
+                            'δ<1.25': f"{m.get('delta1', 0):.1f}%",
+                            'δ<1.25²': f"{m.get('delta2', 0):.1f}%",
+                        }
+                # Add note about alignment
+                formatted_metrics['Note'] = 'Metrics computed after scale-shift alignment to GT'
+
             return (
                 rendered_path,
                 depth_path,
@@ -546,8 +649,15 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                 video_depth,
                 video_silhouette,
                 ply_path,
-                mono_depth_paths,  # List of paths for gallery
+                mono_depth_paths,  # List of paths for gallery (backward compat)
                 flight_video,
+                # Depth analysis outputs
+                depth_analysis.get('standalone_da_paths', []),
+                depth_analysis.get('coarse_mv_paths', []),
+                depth_analysis.get('residual_paths', []),
+                depth_analysis.get('final_fused_paths', []),
+                depth_analysis.get('gt_paths', []),
+                formatted_metrics,
             )
 
         # Connect the run button
@@ -572,6 +682,13 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                 ply_download,
                 mono_depth_gallery,
                 flight_tracking_video,
+                # Depth analysis outputs
+                standalone_da_gallery,
+                coarse_mv_gallery,
+                residual_gallery,
+                final_fused_gallery,
+                gt_depth_gallery,
+                metrics_display,
             ],
             concurrency_id='default_group',
             api_name='run',
