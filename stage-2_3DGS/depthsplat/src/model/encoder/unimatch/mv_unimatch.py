@@ -32,9 +32,22 @@ class MultiViewUniMatch(nn.Module):
         unet_num_res_blocks=1,
         unet_attn_resolutions=[4],
         grid_sample_disable_cudnn=False,
+        # Mask integration options
+        soft_mask_enabled=False,
+        soft_mask_temperature=1.0,
+        soft_mask_edge_weight=0.0,
+        mask_guided_dpt_enabled=False,
+        mask_guided_upsample_enabled=False,
         **kwargs,
     ):
         super(MultiViewUniMatch, self).__init__()
+
+        # Soft mask configuration
+        self.soft_mask_enabled = soft_mask_enabled
+        self.soft_mask_temperature = soft_mask_temperature
+        self.soft_mask_edge_weight = soft_mask_edge_weight
+        self.mask_guided_dpt_enabled = mask_guided_dpt_enabled
+        self.mask_guided_upsample_enabled = mask_guided_upsample_enabled
 
         # CNN
         self.feature_channels = feature_channels
@@ -199,6 +212,8 @@ class MultiViewUniMatch(nn.Module):
             **model_configs[vit_type],
             downsample_factor=upsample_factor,
             num_scales=num_scales,
+            use_mask_guided_gate=mask_guided_dpt_enabled,
+            use_mask_boundary_upsample=mask_guided_upsample_enabled,
         )
 
         self.grid_sample_disable_cudnn = grid_sample_disable_cudnn
@@ -513,7 +528,28 @@ class MultiViewUniMatch(nn.Module):
 
             if mask is not None:
                 curr_mask = F.interpolate(mask, size=(h, w), mode="nearest")
-                cost_volume = cost_volume * curr_mask
+                if self.soft_mask_enabled:
+                    # Soft confidence weighting: preserves gradients at boundaries
+                    # Temperature controls sharpness: τ→0 approaches binary masking
+                    mask_confidence = torch.sigmoid(
+                        (curr_mask - 0.5) / max(self.soft_mask_temperature, 1e-6)
+                    )
+                    # Optional edge-aware weighting
+                    if self.soft_mask_edge_weight > 0:
+                        # Compute mask edges using Sobel-like filter
+                        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                                               dtype=curr_mask.dtype, device=curr_mask.device).view(1, 1, 3, 3)
+                        sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                                               dtype=curr_mask.dtype, device=curr_mask.device).view(1, 1, 3, 3)
+                        edge_x = F.conv2d(curr_mask, sobel_x, padding=1)
+                        edge_y = F.conv2d(curr_mask, sobel_y, padding=1)
+                        edge_magnitude = (edge_x.pow(2) + edge_y.pow(2)).sqrt()
+                        edge_boost = 1.0 + self.soft_mask_edge_weight * edge_magnitude
+                        mask_confidence = mask_confidence * edge_boost
+                    cost_volume = cost_volume * mask_confidence
+                else:
+                    # Original binary masking
+                    cost_volume = cost_volume * curr_mask
 
             # regressor
             features_cnn = features_list_cnn[scale_idx]  # [BV, C, H, W]
@@ -544,8 +580,17 @@ class MultiViewUniMatch(nn.Module):
             if mask is not None:
                 # set background depth to min_depth (far plane)
                 bg_val = min_depth.view(-1, 1, 1, 1)
-                depth = depth * curr_mask + bg_val * (1 - curr_mask)
-                match_prob = match_prob * curr_mask
+                if self.soft_mask_enabled:
+                    # Soft blending for smoother transitions at boundaries
+                    mask_blend = torch.sigmoid(
+                        (curr_mask - 0.5) / max(self.soft_mask_temperature, 1e-6)
+                    )
+                    depth = depth * mask_blend + bg_val * (1 - mask_blend)
+                    match_prob = match_prob * mask_blend
+                else:
+                    # Original binary masking
+                    depth = depth * curr_mask + bg_val * (1 - curr_mask)
+                    match_prob = match_prob * curr_mask
 
             # upsample to the original resolution for supervison at training time only
             if self.training and scale_idx < self.num_scales - 1:
@@ -567,6 +612,7 @@ class MultiViewUniMatch(nn.Module):
                         features_mv if self.num_scales == 1 else features_list_mv[::-1]
                     ),
                     depth=depth,
+                    mask=mask,  # Pass mask for mask-guided DPT fusion
                 )
 
                 depth_bilinear = F.interpolate(

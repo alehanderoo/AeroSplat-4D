@@ -3,6 +3,55 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class MaskGuidedGate(nn.Module):
+    """
+    Mask-guided attention gate for emphasizing foreground boundaries.
+
+    Based on research showing that soft gating with mask features
+    improves depth boundary sharpness in feature fusion.
+    """
+
+    def __init__(self, features: int):
+        super().__init__()
+        # Project mask (1 channel) to feature space
+        self.mask_proj = nn.Sequential(
+            nn.Conv2d(1, features // 4, 3, 1, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(features // 4, features, 1),
+        )
+        # Gate signal from features + mask
+        self.gate = nn.Sequential(
+            nn.Conv2d(features * 2, features, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(features, features, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, features: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """
+        Apply mask-guided gating to features.
+
+        Args:
+            features: Input features [B, C, H, W]
+            mask: Mask tensor [B, 1, H, W] (will be resized if needed)
+
+        Returns:
+            Gated features [B, C, H, W]
+        """
+        # Resize mask to match feature resolution
+        if mask.shape[-2:] != features.shape[-2:]:
+            mask = F.interpolate(mask, size=features.shape[-2:], mode='bilinear', align_corners=True)
+
+        # Project mask to feature space
+        mask_features = self.mask_proj(mask)
+
+        # Compute gate from concatenated features and mask features
+        gate = self.gate(torch.cat([features, mask_features], dim=1))
+
+        # Apply gating with residual connection
+        return features * gate + features * 0.1
+
+
 def _make_scratch(in_shape, out_shape, groups=1, expand=False):
     scratch = nn.Module()
 
@@ -130,7 +179,7 @@ class ResidualConvUnit(nn.Module):
 
 
 class FeatureFusionBlock(nn.Module):
-    """Feature fusion block."""
+    """Feature fusion block with optional mask-guided gating."""
 
     def __init__(
         self,
@@ -141,16 +190,19 @@ class FeatureFusionBlock(nn.Module):
         expand=False,
         align_corners=True,
         size=None,
+        use_mask_guided_gate=False,
     ):
         """Init.
 
         Args:
             features (int): number of features
+            use_mask_guided_gate (bool): whether to use mask-guided attention gating
         """
         super(FeatureFusionBlock, self).__init__()
 
         self.deconv = deconv
         self.align_corners = align_corners
+        self.use_mask_guided_gate = use_mask_guided_gate
 
         self.groups = 1
 
@@ -176,8 +228,17 @@ class FeatureFusionBlock(nn.Module):
 
         self.size = size
 
-    def forward(self, *xs, size=None):
+        # Optional mask-guided gate for skip connection
+        if use_mask_guided_gate:
+            self.mask_gate = MaskGuidedGate(features)
+
+    def forward(self, *xs, size=None, mask=None):
         """Forward pass.
+
+        Args:
+            xs: Input features (1 or 2 tensors)
+            size: Optional output size
+            mask: Optional mask tensor for mask-guided gating [B, 1, H, W]
 
         Returns:
             tensor: output
@@ -185,7 +246,11 @@ class FeatureFusionBlock(nn.Module):
         output = xs[0]
 
         if len(xs) == 2:
-            res = self.resConfUnit1(xs[1])
+            skip = xs[1]
+            # Apply mask-guided gating to skip connection if enabled
+            if self.use_mask_guided_gate and mask is not None:
+                skip = self.mask_gate(skip, mask)
+            res = self.resConfUnit1(skip)
             output = self.skip_add.add(output, res)
 
         output = self.resConfUnit2(output)
@@ -206,7 +271,7 @@ class FeatureFusionBlock(nn.Module):
         return output
 
 
-def _make_fusion_block(features, use_bn, size=None):
+def _make_fusion_block(features, use_bn, size=None, use_mask_guided_gate=False):
     return FeatureFusionBlock(
         features,
         nn.ReLU(False),
@@ -215,6 +280,7 @@ def _make_fusion_block(features, use_bn, size=None):
         expand=False,
         align_corners=True,
         size=size,
+        use_mask_guided_gate=use_mask_guided_gate,
     )
 
 
@@ -233,6 +299,8 @@ class DPTHead(nn.Module):
         downsample_factor=8,
         return_feature=False,
         num_scales=1,
+        use_mask_guided_gate=False,
+        use_mask_boundary_upsample=False,
     ):
         super(DPTHead, self).__init__()
 
@@ -244,6 +312,8 @@ class DPTHead(nn.Module):
         self.downsample_factor = downsample_factor
         self.return_feature = return_feature
         self.num_scales = num_scales
+        self.use_mask_guided_gate = use_mask_guided_gate
+        self.use_mask_boundary_upsample = use_mask_boundary_upsample
 
         if self.concat_features:
             if self.downsample_factor == 4 and num_scales == 2:
@@ -405,10 +475,10 @@ class DPTHead(nn.Module):
 
         self.scratch.stem_transpose = None
 
-        self.scratch.refinenet1 = _make_fusion_block(features, use_bn)
-        self.scratch.refinenet2 = _make_fusion_block(features, use_bn)
-        self.scratch.refinenet3 = _make_fusion_block(features, use_bn)
-        self.scratch.refinenet4 = _make_fusion_block(features, use_bn)
+        self.scratch.refinenet1 = _make_fusion_block(features, use_bn, use_mask_guided_gate=use_mask_guided_gate)
+        self.scratch.refinenet2 = _make_fusion_block(features, use_bn, use_mask_guided_gate=use_mask_guided_gate)
+        self.scratch.refinenet3 = _make_fusion_block(features, use_bn, use_mask_guided_gate=use_mask_guided_gate)
+        self.scratch.refinenet4 = _make_fusion_block(features, use_bn, use_mask_guided_gate=False)  # No skip at this level
 
         # not used
         del self.scratch.refinenet4.resConfUnit1
@@ -417,27 +487,61 @@ class DPTHead(nn.Module):
         head_features_2 = 16
 
         if not self.return_feature:
-            self.scratch.output_conv = nn.Sequential(
-                nn.Conv2d(
+            if use_mask_boundary_upsample:
+                # Mask-boundary guided output conv with edge feature concatenation
+                # Input: features (head_features_1) + mask (1) + mask_edges (1)
+                self.scratch.output_conv_input = nn.Conv2d(
+                    head_features_1 + 2,  # +2 for mask and mask edges
                     head_features_1,
-                    head_features_1 // 2,
-                    3,
-                    1,
-                    1,
-                    padding_mode="replicate",
-                ),
-                nn.GELU(),
-                nn.Conv2d(
-                    head_features_1 // 2,
-                    head_features_2,
                     kernel_size=3,
                     stride=1,
                     padding=1,
                     padding_mode="replicate",
-                ),
-                nn.GELU(),
-                nn.Conv2d(head_features_2, 1, kernel_size=1, stride=1, padding=0),
-            )
+                )
+                self.scratch.output_conv = nn.Sequential(
+                    nn.GELU(),
+                    nn.Conv2d(
+                        head_features_1,
+                        head_features_1 // 2,
+                        3,
+                        1,
+                        1,
+                        padding_mode="replicate",
+                    ),
+                    nn.GELU(),
+                    nn.Conv2d(
+                        head_features_1 // 2,
+                        head_features_2,
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                        padding_mode="replicate",
+                    ),
+                    nn.GELU(),
+                    nn.Conv2d(head_features_2, 1, kernel_size=1, stride=1, padding=0),
+                )
+            else:
+                self.scratch.output_conv = nn.Sequential(
+                    nn.Conv2d(
+                        head_features_1,
+                        head_features_1 // 2,
+                        3,
+                        1,
+                        1,
+                        padding_mode="replicate",
+                    ),
+                    nn.GELU(),
+                    nn.Conv2d(
+                        head_features_1 // 2,
+                        head_features_2,
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                        padding_mode="replicate",
+                    ),
+                    nn.GELU(),
+                    nn.Conv2d(head_features_2, 1, kernel_size=1, stride=1, padding=0),
+                )
 
             # init delta depth as zero
             nn.init.zeros_(self.scratch.output_conv[-1].weight)
@@ -450,6 +554,7 @@ class DPTHead(nn.Module):
         cnn_features=None,
         mv_features=None,
         depth=None,
+        mask=None,
     ):
         out = []
         for i, x in enumerate(out_features):
@@ -556,17 +661,37 @@ class DPTHead(nn.Module):
 
         path_4 = self.scratch.refinenet4(layer_4_rn, size=layer_3_rn.shape[2:])  # 1/8
         path_3 = self.scratch.refinenet3(
-            path_4, layer_3_rn, size=layer_2_rn.shape[2:]
+            path_4, layer_3_rn, size=layer_2_rn.shape[2:], mask=mask
         )  # 1/4
         path_2 = self.scratch.refinenet2(
-            path_3, layer_2_rn, size=layer_1_rn.shape[2:]
+            path_3, layer_2_rn, size=layer_1_rn.shape[2:], mask=mask
         )  # 1/2
-        path_1 = self.scratch.refinenet1(path_2, layer_1_rn)  # 1
+        path_1 = self.scratch.refinenet1(path_2, layer_1_rn, mask=mask)  # 1
 
         if self.return_feature:
             return path_1
 
-        out = self.scratch.output_conv(path_1)
+        if self.use_mask_boundary_upsample and mask is not None:
+            # Resize mask to match path_1 resolution
+            mask_resized = F.interpolate(mask, size=path_1.shape[-2:], mode='bilinear', align_corners=True)
+
+            # Compute mask edges using Sobel filter
+            sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                                   dtype=path_1.dtype, device=path_1.device).view(1, 1, 3, 3)
+            sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                                   dtype=path_1.dtype, device=path_1.device).view(1, 1, 3, 3)
+            edge_x = F.conv2d(mask_resized, sobel_x, padding=1)
+            edge_y = F.conv2d(mask_resized, sobel_y, padding=1)
+            mask_edges = (edge_x.pow(2) + edge_y.pow(2)).sqrt()
+
+            # Concatenate features with mask and mask edges
+            path_1_with_mask = torch.cat([path_1, mask_resized, mask_edges], dim=1)
+
+            # Apply mask-boundary guided output conv
+            path_1_processed = self.scratch.output_conv_input(path_1_with_mask)
+            out = self.scratch.output_conv(path_1_processed)
+        else:
+            out = self.scratch.output_conv(path_1)
 
         return out
 

@@ -18,7 +18,7 @@ tmux new-session -d -s "$SESSION_NAME" -c "$PROJECT_ROOT"
 
 # Activate conda environment inside tmux session, then run training
 tmux send-keys -t "$SESSION_NAME" "source ~/anaconda3/etc/profile.d/conda.sh && conda activate depthsplat && \\" C-m
-tmux send-keys -t "$SESSION_NAME" "python -m src.main +experiment=objaverse_white_small_gauss \\" C-m
+tmux send-keys -t "$SESSION_NAME" "python -m src.main +experiment=objaverse_white_small_gauss_depthMask \\" C-m
 tmux send-keys -t "$SESSION_NAME" "    wandb.entity=a-a-f-verdiesen-tu-delft " C-m
 # tmux send-keys -t "$SESSION_NAME" "    wandb.name=objaverse_white_bg_118k " C-m
 # tmux send-keys -t "$SESSION_NAME" "    trainer.max_steps=100000" C-m

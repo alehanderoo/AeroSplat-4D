@@ -68,10 +68,25 @@ class EncoderDepthSplatCfg:
     # multi-view matching
     local_mv_match: int
 
+    # Mask integration options (from research literature)
+    soft_mask_enabled: bool = False  # Use soft confidence weighting instead of binary masking
+    soft_mask_temperature: float = 1.0  # Temperature for sigmoid sharpness (lower = sharper)
+    soft_mask_edge_weight: float = 0.0  # Edge-aware weighting boost factor
+    mask_guided_dpt_enabled: bool = False  # Enable mask-guided attention in DPT fusion
+    mask_guided_upsample_enabled: bool = False  # Enable mask boundary-guided upsampling
+
 
 class EncoderDepthSplat(Encoder[EncoderDepthSplatCfg]):
     def __init__(self, cfg: EncoderDepthSplatCfg) -> None:
         super().__init__(cfg)
+
+        # Log mask integration settings
+        print(f"[EncoderDepthSplat] Mask integration settings:")
+        print(f"  soft_mask_enabled: {cfg.soft_mask_enabled}")
+        print(f"  soft_mask_temperature: {cfg.soft_mask_temperature}")
+        print(f"  soft_mask_edge_weight: {cfg.soft_mask_edge_weight}")
+        print(f"  mask_guided_dpt_enabled: {cfg.mask_guided_dpt_enabled}")
+        print(f"  mask_guided_upsample_enabled: {cfg.mask_guided_upsample_enabled}")
 
         self.depth_predictor = MultiViewUniMatch(
             num_scales=cfg.num_scales,
@@ -80,6 +95,12 @@ class EncoderDepthSplat(Encoder[EncoderDepthSplatCfg]):
             vit_type=cfg.monodepth_vit_type,
             unet_channels=cfg.depth_unet_channels,
             grid_sample_disable_cudnn=cfg.grid_sample_disable_cudnn,
+            # Mask integration options
+            soft_mask_enabled=cfg.soft_mask_enabled,
+            soft_mask_temperature=cfg.soft_mask_temperature,
+            soft_mask_edge_weight=cfg.soft_mask_edge_weight,
+            mask_guided_dpt_enabled=cfg.mask_guided_dpt_enabled,
+            mask_guided_upsample_enabled=cfg.mask_guided_upsample_enabled,
         )
 
         if self.cfg.train_depth_only:
@@ -96,6 +117,7 @@ class EncoderDepthSplat(Encoder[EncoderDepthSplatCfg]):
                                         downsample_factor=cfg.upsample_factor,
                                         return_feature=True,
                                         num_scales=cfg.num_scales,
+                                        use_mask_guided_gate=cfg.mask_guided_dpt_enabled,
                                         )
         feature_upsampler_channels = model_configs[cfg.monodepth_vit_type]["features"]
         
@@ -207,11 +229,20 @@ class EncoderDepthSplat(Encoder[EncoderDepthSplatCfg]):
                 "depths": depths
             }
 
+        # Prepare mask for DPT if available
+        mask_for_dpt = None
+        if self.cfg.mask_guided_dpt_enabled and context.get("mask") is not None:
+            mask_for_dpt = context["mask"]
+            if mask_for_dpt.dim() == 5:
+                mask_for_dpt = mask_for_dpt.squeeze(2)  # [B, V, H, W]
+            mask_for_dpt = rearrange(mask_for_dpt, "b v h w -> (b v) 1 h w")
+
         # features [BV, C, H, W]
         features = self.feature_upsampler(results_dict["features_mono_intermediate"],
                                           cnn_features=results_dict["features_cnn_all_scales"][::-1],
                                           mv_features=results_dict["features_mv"][
-                                          0] if self.cfg.num_scales == 1 else results_dict["features_mv"][::-1]
+                                          0] if self.cfg.num_scales == 1 else results_dict["features_mv"][::-1],
+                                          mask=mask_for_dpt,
                                           )
 
         # match prob from softmax

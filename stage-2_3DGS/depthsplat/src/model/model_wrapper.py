@@ -259,8 +259,8 @@ class ModelWrapper(LightningModule):
                     clamp_large_error=self.train_cfg.train_ignore_large_loss,
                     valid_depth_mask=valid_depth_mask,
                 )
-            elif loss_fn.name == "depth":
-                # Pass predicted depths for depth supervision
+            elif loss_fn.name == "depth" or loss_fn.name == "gradient":
+                # Pass predicted depths for depth supervision and gradient matching
                 loss = loss_fn.forward(
                     output,
                     batch,

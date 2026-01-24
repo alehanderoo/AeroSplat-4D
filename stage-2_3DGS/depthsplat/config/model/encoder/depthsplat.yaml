@@ -53,3 +53,11 @@ gaussian_regressor_channels: 64
 
 # only depth
 train_depth_only: false
+
+# Mask integration options (research-based improvements for object-centric depth)
+# All disabled by default for backward compatibility
+soft_mask_enabled: false  # Use soft confidence weighting instead of binary masking in cost volume
+soft_mask_temperature: 1.0  # Temperature for sigmoid sharpness (lower = sharper, 0 = binary)
+soft_mask_edge_weight: 0.0  # Edge-aware weighting boost factor at mask boundaries
+mask_guided_dpt_enabled: false  # Enable mask-guided attention gates in DPT fusion blocks
+mask_guided_upsample_enabled: false  # Enable mask boundary-guided depth upsampling

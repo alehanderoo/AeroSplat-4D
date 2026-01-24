@@ -1,0 +1,7 @@
+gradient:
+  weight: 0.1
+  boundary_weight: 2.0
+  boundary_dilation: 3
+  multi_scale: true
+  min_depth: 0.1
+  max_depth: 10.0
