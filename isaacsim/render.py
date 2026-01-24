@@ -99,12 +99,14 @@ class Render:
         # Schedule the async rendering task
         # This uses the omni.kit async context which is already running in Isaac Sim
         drone_prim_path = self.cfg.get("drone", {}).get("prim_path", "/World/Drone")
-        
+        crop_depth_config = self.render_cfg.get("crop_depth", {})
+
         import asyncio
         task = asyncio.ensure_future(
             render_multi_camera_async(
                 num_cameras, num_frames, output_dir, base_path, stage_fps, warmup_frames,
-                drone_prim_path=drone_prim_path
+                drone_prim_path=drone_prim_path,
+                crop_depth_config=crop_depth_config
             )
         )
         
@@ -125,6 +127,7 @@ async def render_multi_camera_async(
     stage_fps=30.0,
     warmup_frames=0,
     drone_prim_path=None,
+    crop_depth_config=None,
 ):
     """
     Render from multiple cameras and save RGB, depth, and instance segmentation.
@@ -908,6 +911,42 @@ async def render_multi_camera_async(
                 pass
 
         print(f"[RENDER] Rendering complete! Output saved to: {output_dir}")
+
+        # Optional: Crop depth maps to object bounding boxes to save storage
+        # This is a post-processing step controlled by config
+        # Full scene depth: ~14.7MB per frame
+        # Cropped object depth: ~10-100KB per frame (99%+ reduction)
+        if crop_depth_config is None:
+            crop_depth_config = {}
+
+        crop_depth_enabled = crop_depth_config.get("enabled", False)
+        crop_depth_padding = crop_depth_config.get("padding", 10)
+        crop_depth_keep_originals = crop_depth_config.get("keep_originals", False)
+
+        # Also check environment variable override
+        if os.environ.get("ISAACSIM_CROP_DEPTH", "").lower() in ("1", "true", "yes"):
+            crop_depth_enabled = True
+            if os.environ.get("ISAACSIM_CROP_DEPTH_PADDING"):
+                crop_depth_padding = int(os.environ.get("ISAACSIM_CROP_DEPTH_PADDING", "10"))
+            if os.environ.get("ISAACSIM_CROP_DEPTH_KEEP"):
+                crop_depth_keep_originals = os.environ.get("ISAACSIM_CROP_DEPTH_KEEP", "").lower() in ("1", "true", "yes")
+
+        if crop_depth_enabled:
+            print("[RENDER] Cropping depth maps to object bounding boxes...")
+            try:
+                from crop_depth import process_render_directory
+                crop_stats = process_render_directory(
+                    Path(output_dir),
+                    padding=crop_depth_padding,
+                    keep_originals=crop_depth_keep_originals,
+                    verbose=True
+                )
+                if crop_stats.get("storage_saved_mb"):
+                    print(f"[RENDER] Depth cropping saved {crop_stats['storage_saved_mb']:.1f} MB")
+            except ImportError:
+                print("[RENDER] Warning: crop_depth.py not found, skipping depth cropping")
+            except Exception as exc:
+                print(f"[RENDER] Warning: Depth cropping failed: {exc}")
     finally:
         try:
             restore_filter = previous_semantic_filter if previous_semantic_filter else "class:*"

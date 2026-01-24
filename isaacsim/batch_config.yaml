@@ -1,0 +1,152 @@
+# Batch Rendering Configuration
+# Defines parameter sweeps for automated headless rendering
+# Each combination of parameters will produce a separate render output
+
+# =====================================================================
+# Assets to Render
+# =====================================================================
+# List asset names from asset_config.yaml (or "all" to render everything)
+assets:
+  # Birds
+  - "bald-eagle-med-poly.usdc"
+  - "Crow - Hello Neighbor 2.usdc"
+  - "crow-fly.usdc"
+  - "dove-bird-rigged.usdc"
+  - "owl.usdc"
+  - "pigeon.usdc"
+  - "Seagull.usdc"
+  - "parrot.usdc"
+  - "cacao.usdc"
+  - "20 Owl_merged.usdc"
+  - "Grus-nigricollis.usdc"
+  - "KingFisher.usdc"
+  - "Paloma_animada.usdc"
+  - "phoenix.usdc"
+  - "Quetzal Animation.usdc"
+  # Dragons (treated as birds for classification)
+  - "snow-dragon.usdc"
+  - "fire-fragon.usdc"
+  - "dragon-flying-cycle.usdc"
+  - "dragon-flying.usdc"
+  - "dragon-flying-test.usdc"
+  - "shadow-dragon.usdc"
+  # Drones
+  - "Low-poly FPV.usdc"
+  - "FPV-drone.usdc"
+  - "FPV-drone-with-a.usdc"
+  - "DJI Inspire 2.usdc"
+  - "DJI Inspire 3.usdc"
+  - "DJI Mini 3 Pro.usdc"
+  - "dji phantom 3.usdc"
+  - "quadcopter-dji-matrice-300-rtk.usdc"
+  - "Dji Mavic 3 Classic Drone.usdc"
+  - "Untitled.usdc"  # DJI Mavic 2
+  - "Race Drone - Hunter.usdc"
+  - "Race Drone - Scout.usdc"
+  - "AGRICULTURE HEXACOPTER DRONE.usdc"
+  - "drone-m600.usdc"
+  - "hexacopter-15.usdc"
+
+# =====================================================================
+# Scene Configuration Sweeps
+# =====================================================================
+# Scenes to use as backgrounds (USD paths or Omniverse URLs)
+# NOTE: Large scenes like Rivermark can cause GPU memory issues. Use simpler scenes for batch rendering.
+scenes:
+  # Simple warehouse - lightweight, good for testing
+  - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Simple_Warehouse/warehouse.usd"
+    name: "warehouse"
+  # Simple room - very lightweight
+  - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Simple_Room/simple_room.usd"
+    name: "simple_room"
+  # Grid room - minimal scene for testing
+  - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Grid/default_environment.usd"
+    name: "grid"
+  # Rivermark - HEAVY, may cause GPU memory issues on complex renders
+  # - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Environments/Outdoor/Rivermark/rivermark.usd"
+  #   name: "rivermark"
+
+# =====================================================================
+# Camera Rig Parameters
+# =====================================================================
+# Camera rig diameter in meters (distance from cameras to center)
+side_meters:
+  - 10.0
+  - 20.0
+  - 30.0
+
+# Camera height above ground (meters)
+cam_heights:
+  - 5.0
+  - 7.0
+  - 10.0
+
+# Flight height offset from waypoint (meters)
+flight_height_offsets:
+  - 10.0
+  - 15.0
+  - 20.0
+
+# Camera rotation offset (radians, for varying camera angles)
+rotation_offsets:
+  - 0.0
+  # - 0.7854   # 45 degrees
+  # - 1.5708   # 90 degrees
+
+# Camera types from cam_intrinsics.yaml
+camera_types:
+  - "ip_cam_2k"
+  # - "ip_cam_generic_1080p"
+  # - "no_distortion"
+
+# =====================================================================
+# Rendering Settings (shared across all renders)
+# =====================================================================
+render:
+  num_frames: 120
+  num_cameras: 5
+  fps: 30.0
+
+  # Render passes to enable
+  passes:
+    rgb: true
+    depth: true
+    instance_segmentation: true
+    semantic_segmentation: true
+
+  # Depth cropping: Crop depth maps to object bounding box after rendering
+  # This dramatically reduces storage (full: ~14.7MB/frame -> cropped: ~10-100KB/frame)
+  crop_depth:
+    enabled: false          # Set to true to enable automatic depth cropping
+    padding: 10             # Pixels of padding around object bounding box
+    keep_originals: false   # Keep original full-scene depth files (default: delete)
+
+# =====================================================================
+# Output Configuration
+# =====================================================================
+output:
+  # Base directory for all renders
+  base_path: "/home/sandro/aeroSplat-4D/renders"
+
+  # Output folder naming pattern (available variables: asset, scene, side_m, height_m, cam_type)
+  # Example output: renders/bald-eagle-med-poly_rivermark_10m_15h_ip_cam_2k/
+  folder_pattern: "{asset}_{scene}_{side_m}m_{height_m}h_{cam_type}"
+
+# =====================================================================
+# Execution Settings
+# =====================================================================
+execution:
+  # Continue from where we left off (skip already rendered combinations)
+  resume: true
+
+  # Maximum concurrent renders (for future parallel support)
+  max_parallel: 1
+
+  # Verbose logging
+  verbose: true
+
+  # Warmup frames before capture
+  warmup_frames: 0
+
+  # Dry run - print what would be rendered without actually rendering
+  dry_run: false

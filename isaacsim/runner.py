@@ -480,6 +480,10 @@ async def _run_workflow_async(cfg, verbose, steps_to_run):
                 print(f"[STEP 5/5] Output directory: {output_dir}")
                 print(f"[STEP 5/5] Starting render of {num_frames} frames from {num_cameras} cameras")
             
+            # Extract additional render config
+            drone_prim_path = cfg.get("drone", {}).get("prim_path", "/World/Drone")
+            crop_depth_config = render_cfg.get("crop_depth", {})
+
             # Execute rendering and wait for completion
             await render_multi_camera_async(
                 num_cameras=num_cameras,
@@ -487,7 +491,9 @@ async def _run_workflow_async(cfg, verbose, steps_to_run):
                 output_dir=output_dir,
                 base_path=base_path,
                 stage_fps=stage_fps,
-                warmup_frames=warmup_frames
+                warmup_frames=warmup_frames,
+                drone_prim_path=drone_prim_path,
+                crop_depth_config=crop_depth_config
             )
             
             if verbose:

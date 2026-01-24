@@ -45,9 +45,8 @@ Paloma_animada.usdc:
   scale: [1.0, 1.0, 1.0]
   animation_speed_factor: 1.0
 
-# does not work
-Quetzal Animation.fbx:
-  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/Quetzal-Animation/Quetzal Animation.fbx"
+Quetzal Animation.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/birds/Quetzal-Animation/Quetzal Animation.usdc"
   type: "bird"
   translation: [0.0, 0.0, 0.0]
   orientation: [0.0, 0.0, 0.0]
@@ -240,8 +239,8 @@ quadcopter-dji-matrice-300-rtk.usdc:
   scale: [1.0, 1.0, 1.0]
   animation_speed_factor: 1.0
 
-dji-mavic-2.usdc:
-  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-mavic-2/dji-mavic-2.usdc"
+Untitled.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-mavic-2/Untitled.usdc"
   type: "drone"
   translation: [0.0, 0.0, 0.0]
   orientation: [0.0, 0.0, 0.0]
@@ -250,6 +249,46 @@ dji-mavic-2.usdc:
 
 Dji Mavic 3 Classic Drone.usdc:
   usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-mavic-3-classic-drone/Dji Mavic 3 Classic Drone.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+AGRICULTURE HEXACOPTER DRONE.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/argiculture-hexacopter-drone/AGRICULTURE HEXACOPTER DRONE.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+DJI Mini 3 Pro.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-mini-3-pro/DJI Mini 3 Pro.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+dji phantom 3.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/dji-phantom-3/dji phantom 3.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+drone-m600.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/drone-m600/drone-m600.usdc"
+  type: "drone"
+  translation: [0.0, 0.0, 0.0]
+  orientation: [0.0, 0.0, 0.0]
+  scale: [1.0, 1.0, 1.0]
+  animation_speed_factor: 1.0
+
+hexacopter-15.usdc:
+  usd_path: "/home/sandro/aeroSplat-4D/assets/drones/hexacopter-15/hexacopter-15.usdc"
   type: "drone"
   translation: [0.0, 0.0, 0.0]
   orientation: [0.0, 0.0, 0.0]
