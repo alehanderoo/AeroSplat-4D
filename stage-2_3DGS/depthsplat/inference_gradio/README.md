@@ -1,6 +1,19 @@
 # DepthSplat Gradio Demo
 
-A Gradio web interface for the DepthSplat object-centric 3D Gaussian Splatting model. Upload images of an object from different viewpoints to generate a 3D Gaussian Splat representation and render novel views.
+A Gradio web interface for the DepthSplat object-centric 3D Gaussian Splatting model. This is a frontend application that uses the `inference_backend` service for all inference operations.
+
+## Architecture
+
+```
+inference_gradio/          <- This directory (Gradio frontend)
+    └── app.py             <- Web interface, uses inference_backend
+
+inference_backend/         <- Standalone backend service
+    ├── service.py         <- Core InferenceService
+    ├── types.py           <- RenderSettings, VideoSettings, etc.
+    ├── camera_utils.py    <- Camera transformations
+    └── ...
+```
 
 ## Quick Start
 
@@ -10,8 +23,8 @@ conda activate depthsplat
 
 # Run the demo
 python app.py \
-    --checkpoint /home/sandro/aeroSplat-4D/stage-2_3DGS/depthsplat/outputs/objaverse_white_small_gauss/checkpoints/epoch_0-step_100000.ckpt \
-    --config objaverse_white_small_gauss \
+    --checkpoint /path/to/checkpoint.ckpt \
+    --config objaverse_white \
     --port 7860
 ```
 
@@ -23,50 +36,74 @@ The demo will be available at `http://localhost:7860`.
 
 ```bash
 python app.py \
-    --checkpoint /home/sandro/aeroSplat-4D/stage-2_3DGS/depthsplat/outputs/objaverse_white_small_gauss/checkpoints/epoch_0-step_100000.ckpt \
-    --config objaverse_white_small_gauss \
+    --checkpoint /path/to/checkpoint.ckpt \
+    --config objaverse_white \
     --port 7860 \
-    --share
+    --share  # Optional: create public link
 ```
 
-### Input Requirements
+### Features
 
-1. **Images**: Upload 5 images of an object from different viewpoints
-   - Best results with white/clean backgrounds
-   - Object should be centered in each image
-   - Images will be resized to 256x256
+1. **Load Examples from Objaverse Test Set**
+   - Select specific UUIDs for consistent testing
+   - Load random examples
 
-2. **Camera Settings**:
-   - **Default orbital cameras**: Assumes images are taken from viewpoints orbiting around the object at equal angular intervals
-   - **Camera distance**: Distance from object center (default: 2.0)
-   - **Camera elevation**: Height offset from ground plane (default: 0.3)
-   - **Field of view**: Camera FOV in degrees (default: 50)
+2. **Load In-the-Wild Frames (Isaac Sim)**
+   - Process frames 0-119 from simulation renders
+   - Automatic pose normalization and FOV matching
 
-3. **Target View**:
-   - **Azimuth**: Horizontal angle for novel view (0-360 degrees)
-   - **Elevation**: Height offset for novel view
+3. **Novel View Rendering**
+   - Control azimuth, elevation, and distance
+   - Real-time camera parameter preview
+
+4. **360° Video Generation**
+   - RGB, depth, and silhouette videos
+   - Configurable frame count
+
+5. **Flight Tracking Mode**
+   - Process all 120 frames with rotating viewpoint
+   - Generate continuous tracking video
+
+6. **Depth Analysis**
+   - Compare standalone Depth Anything V2, coarse MV, DPT residual, and final fused depth
+   - Metrics comparison with ground truth (for Isaac Sim frames)
+
+7. **PLY Export**
+   - Download 3D Gaussian Splat models
 
 ### Outputs
 
-- **Rendered Image**: Novel view synthesis from the target viewpoint
-- **360 Video**: Rotating video around the reconstructed object
-- **PLY File**: 3D Gaussian Splat model downloadable for viewing in external tools
+- **Rendered Image**: Novel view synthesis from target viewpoint
+- **Depth Map**: Rendered depth visualization
+- **Silhouette**: Object alpha/mask
+- **360 Videos**: RGB, depth, silhouette rotation videos
+- **PLY File**: 3D Gaussian Splat model
 
 ## File Structure
 
 ```
 inference_gradio/
-├── app.py           # Main Gradio application
-├── runner.py        # Model loading and inference logic
-├── camera_utils.py  # Camera transformation utilities
-├── requirements.txt # Python dependencies
-└── README.md        # This file
+├── app.py              # Main Gradio application (uses inference_backend)
+├── README.md           # This file
+├── requirements.txt    # Python dependencies
+├── runner.py           # Legacy (now uses inference_backend)
+├── camera_utils.py     # Legacy (now in inference_backend)
+├── data_loader.py      # Legacy (now in inference_backend)
+└── services/           # Legacy (now in inference_backend)
 ```
 
+## Backend Service
+
+All inference logic has been abstracted into `inference_backend/`. See `../inference_backend/README.md` for details on:
+
+- `InferenceService` - Main reconstruction API
+- `RenderSettings` - Novel view parameters
+- `VideoSettings` - Video generation settings
+- `WildFrameLoader` - Isaac Sim frame loading
+- Camera utilities and depth analysis tools
 
 ## Camera Conventions
 
 - **Coordinate System**: OpenCV convention (+X right, +Y down, +Z forward)
 - **Extrinsics**: Camera-to-world transformation matrices (4x4)
 - **Intrinsics**: Normalized (focal length and principal point in [0, 1] range)
-

@@ -2,7 +2,7 @@
 DepthSplat Gradio Demo.
 
 A Gradio interface for the DepthSplat object-centric 3D Gaussian Splatting model.
-Input 5 images of an object with camera poses, and render novel views.
+This is the frontend that uses the inference_backend service for all processing.
 """
 
 import os
@@ -20,45 +20,46 @@ import torch
 import gradio as gr
 from PIL import Image
 
-# Add parent to path
+# Add parent to path for inference_backend import
 DEPTHSPLAT_ROOT = Path(__file__).parent.parent
 if str(DEPTHSPLAT_ROOT) not in sys.path:
     sys.path.insert(0, str(DEPTHSPLAT_ROOT))
 
-from runner import DepthSplatRunner, create_default_intrinsics
-from data_loader import (
+# Import from inference_backend
+from inference_backend import (
+    InferenceService,
+    RenderSettings,
+    VideoSettings,
+    WildFrameLoader,
     get_random_example,
-    save_example_images,
-    list_available_examples,
     get_example_by_uuid,
+    save_example_images,
     HARDCODED_UUIDS,
+    format_metrics_for_display,
 )
-from services.gt_detection_service import create_gt_detection_service
-from camera_utils import normalize_intrinsics
 
 
-# Default dataset path
+# Default paths
 DEFAULT_DATA_DIR = "/mnt/raid0/objaverse/test"
+DEFAULT_RENDER_DIR = "/home/sandro/aeroSplat-4D/renders/5cams_drone_50m"
 
 _HEADER_ = '''
 # DepthSplat Object-Centric 3D Gaussian Splatting Demo
 '''
 
 
-
-
 class GradioRunner:
-    """Wrapper for running DepthSplat inference in Gradio."""
+    """Wrapper for running DepthSplat inference in Gradio using the backend service."""
 
     def __init__(self, checkpoint_path: str, config_name: str = "objaverse_white"):
         """Initialize the runner with a checkpoint."""
-        self.runner = DepthSplatRunner(
+        self.service = InferenceService.from_checkpoint(
             checkpoint_path=checkpoint_path,
             config_name=config_name,
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
-        self.image_shape = self.runner.image_shape
-        self.current_example = None  # Store current loaded example for GT cameras
+        self.image_shape = self.service.image_shape
+        self.current_example = None
 
     def run_with_custom_camera(
         self,
@@ -69,7 +70,7 @@ class GradioRunner:
         enable_video: bool,
         num_video_frames: int,
         cache_dir: str = None,
-    ) -> Tuple[str, str, str, str, str, str, str, List[str]]:
+    ) -> Tuple:
         """
         Run inference using custom target camera.
 
@@ -83,9 +84,7 @@ class GradioRunner:
             cache_dir: Directory for outputs
 
         Returns:
-            Tuple of (rendered_image_path, depth_image_path, silhouette_image_path,
-                      video_rgb_path, video_depth_path, video_silhouette_path, ply_path,
-                      mono_depth_paths)
+            Tuple of output paths and depth analysis data
         """
         torch.cuda.empty_cache()
 
@@ -94,6 +93,9 @@ class GradioRunner:
 
         if image_files is None or len(image_files) == 0:
             raise gr.Error("Please load an example first")
+
+        if self.current_example is None:
+            raise gr.Error("No example loaded. Please load an example first.")
 
         # Load images
         images = []
@@ -108,95 +110,50 @@ class GradioRunner:
         print(f"Loaded {num_views} images")
         print(f"Target camera: azimuth={azimuth}°, elevation={elevation}°, distance={distance}")
 
-        # Use GT cameras for context if available
-        if self.current_example is not None:
-            extrinsics = self.current_example['extrinsics']
-            intrinsics = self.current_example['intrinsics']
-            print(f"Using GT context cameras from example: {self.current_example['key']}")
-        else:
-            raise gr.Error("No example loaded. Please load an example first.")
+        # Get camera parameters from loaded example
+        extrinsics = self.current_example['extrinsics']
+        intrinsics = self.current_example['intrinsics']
+        print(f"Using context cameras from example: {self.current_example.get('key', 'unknown')}")
 
-        # Create custom target camera from azimuth/elevation/distance
-        # Objaverse cameras are on a hemisphere ABOVE the object, looking DOWN at origin
-        # Elevation: 60° = near top (looking down), 0° = equator (horizontal), -30° = below equator
-        # Azimuth: 0° = +X direction, 90° = +Y direction
-        
-        # Use radius similar to GT cameras (they are at distance ~1.2-1.5 from origin)
-        base_radius = 2.0  # Match normalization target radius (runner.py)
-        radius = base_radius * distance
-        
-        azimuth_rad = np.deg2rad(azimuth)
-        elevation_rad = np.deg2rad(elevation)
-        
-        # Spherical coordinates: elevation is measured from horizontal plane
-        # x = r * cos(el) * cos(az)
-        # y = r * cos(el) * sin(az)  
-        # z = r * sin(el)
-        x = radius * np.cos(elevation_rad) * np.cos(azimuth_rad)
-        y = radius * np.cos(elevation_rad) * np.sin(azimuth_rad)
-        z = radius * np.sin(elevation_rad)
-        
-        # Camera position
-        cam_pos = np.array([x, y, z], dtype=np.float32)
-        
-        # Look at origin
-        target = np.array([0, 0, 0], dtype=np.float32)
-        forward = target - cam_pos
-        forward = forward / np.linalg.norm(forward)
-        
-        # World up vector (Z is up)
-        world_up = np.array([0, 0, 1], dtype=np.float32)
-        
-        # Right vector = forward x up
-        right = np.cross(forward, world_up)
-        if np.linalg.norm(right) < 1e-6:
-            # Handle case when looking straight up/down - use Y as temporary up
-            world_up = np.array([0, 1, 0], dtype=np.float32)
-            right = np.cross(forward, world_up)
-        right = right / np.linalg.norm(right)
-        
-        # Recompute up to be orthogonal: up = right x forward
-        up = np.cross(right, forward)
-        up = up / np.linalg.norm(up)
+        # Create settings
+        render_settings = RenderSettings(
+            azimuth=azimuth,
+            elevation=elevation,
+            distance=distance,
+        )
+        video_settings = VideoSettings(
+            enabled=enable_video,
+            num_frames=num_video_frames if enable_video else 0,
+            elevation=elevation,
+            distance=distance,
+        )
 
-        # Build rotation matrix - camera-to-world
-        # OpenCV convention: camera +X=right, +Y=down, +Z=forward (optical axis)
-        # The columns of R are where camera axes point in world coordinates
-        down = -up  # Camera Y axis points down in world
-        R = np.stack([right, down, forward], axis=1).astype(np.float32)
-        
-        # Build 4x4 camera-to-world extrinsics matrix
-        target_extrinsic = np.eye(4, dtype=np.float32)
-        target_extrinsic[:3, :3] = R
-        target_extrinsic[:3, 3] = cam_pos
-        target_extrinsics = target_extrinsic[np.newaxis, ...]  # [1, 4, 4]
-        
-        print(f"Target camera position: x={x:.3f}, y={y:.3f}, z={z:.3f}, radius={radius:.3f}")
-
-        # Run inference (only generate videos if enabled)
-        actual_video_frames = num_video_frames if enable_video else 0
-        result = self.runner.run_inference(
+        # Run inference using the backend service
+        result = self.service.reconstruct(
             images=images,
             extrinsics=extrinsics,
             intrinsics=intrinsics,
-            target_extrinsics=target_extrinsics,
-            target_intrinsics=None,
+            render_settings=render_settings,
+            video_settings=video_settings,
             output_dir=cache_dir,
-            num_video_frames=actual_video_frames,
         )
 
-        # Store depth analysis for access by wrapper
-        self.runner._last_depth_analysis = result.get('depth_analysis', {})
+        # Store result for access
+        self._last_result = result
+
+        # Extract depth analysis paths
+        depth_analysis = result.depth_analysis or {}
 
         return (
-            result['result_image_path'],
-            result['depth_image_path'],
-            result['silhouette_image_path'],
-            result['video_rgb_path'],
-            result['video_depth_path'],
-            result['video_silhouette_path'],
-            result['ply_path'],
-            result.get('mono_depth_paths', []),
+            result.rendered_image_path,
+            result.depth_image_path,
+            result.silhouette_image_path,
+            result.video_rgb_path,
+            result.video_depth_path,
+            result.video_silhouette_path,
+            result.ply_path,
+            depth_analysis.get('residual_paths', []),
+            depth_analysis,
         )
 
     def load_random_example(self, cache_dir: str = None) -> Tuple[List[str], str]:
@@ -210,7 +167,6 @@ class GradioRunner:
 
         self.current_example = example
 
-        # Save images to disk
         example_dir = os.path.join(cache_dir, example['key'])
         image_paths = save_example_images(example, example_dir)
 
@@ -230,37 +186,47 @@ class GradioRunner:
 
         self.current_example = example
 
-        # Save images to disk
         example_dir = os.path.join(cache_dir, example['key'])
         image_paths = save_example_images(example, example_dir)
 
-        return image_paths, f"Loaded: {example['key']} (views: {example['selected_indices']})"
+        return image_paths, f"Loaded: {example['key']} (views: {example.get('selected_indices', [])})"
 
-    def load_wild_frame(self, frame_id: int, render_dir: str, cache_dir: str = None) -> Tuple[List[str], str, float]:
-        """
-        Load a specific frame from "in-the-wild" renders.
+    def load_wild_frame(
+        self,
+        frame_id: int,
+        render_dir: str = None,
+        cache_dir: str = None,
+    ) -> Tuple[List[str], str, float]:
+        """Load a specific frame from "in-the-wild" renders."""
+        if render_dir is None:
+            render_dir = DEFAULT_RENDER_DIR
+        if cache_dir is None:
+            cache_dir = "/tmp/depthsplat_gradio_wild"
 
-        Delegates to DepthSplatRunner.load_wild_frame which has the correct
-        coordinate system transformations, centering, and scaling.
+        # Use the WildFrameLoader from backend
+        loader = WildFrameLoader(
+            render_dir=render_dir,
+            use_virtual_cameras=True,
+        )
 
-        Args:
-            frame_id: Frame index (0-119)
-            render_dir: Path to render directory
-            cache_dir: Temp directory
+        frame_data = loader.load_frame(frame_id, cache_dir)
 
-        Returns:
-            Tuple of (list of image paths, status string, recommended elevation)
-        """
-        # Delegate to the fully-functional runner implementation
-        image_paths, status = self.runner.load_wild_frame(frame_id, render_dir, cache_dir)
+        # Store as current example
+        self.current_example = {
+            'key': f"wild_{frame_id}",
+            'extrinsics': frame_data['extrinsics'],
+            'intrinsics': frame_data['intrinsics'],
+            'render_dir': render_dir,
+            'scale_factor': frame_data['scale_factor'],
+            'center': frame_data['center'],
+            'mean_elevation': frame_data['mean_elevation'],
+        }
 
-        # Copy the context from runner to GradioRunner
-        self.current_example = self.runner.current_example
-
-        # Get the recommended elevation (mean of input cameras)
-        mean_elevation = self.current_example.get('mean_elevation', -60.0)
-
-        return image_paths, status, mean_elevation
+        return (
+            frame_data['image_paths'],
+            frame_data['status'],
+            frame_data['mean_elevation'],
+        )
 
     def run_flight_tracking(
         self,
@@ -268,40 +234,75 @@ class GradioRunner:
         elevation: float,
         distance: float,
         cache_dir: str = None,
-    ) -> str:
+    ) -> Optional[str]:
         """
         Run 360° flight tracking video generation.
 
-        Args:
-            render_dir: Path to render directory
-            elevation: Camera elevation angle in degrees
-            distance: Camera distance factor
-            cache_dir: Directory for outputs
-
-        Returns:
-            Path to the generated video, or None on failure
+        This processes all 120 frames, running inference on each.
         """
         if cache_dir is None:
             cache_dir = "/tmp/depthsplat_flight_tracking"
 
+        os.makedirs(cache_dir, exist_ok=True)
+
+        loader = WildFrameLoader(render_dir=render_dir, use_virtual_cameras=True)
+        rendered_frames = []
+
         try:
-            result = self.runner.generate_flight_tracking_video(
-                render_dir=render_dir,
-                cache_dir=cache_dir,
-                start_frame=0,
-                end_frame=119,
-                elevation=elevation,
-                distance=distance,
-            )
-            return result.get('flight_video_path')
+            for frame_id in range(120):
+                print(f"\n[Flight Tracking] Processing frame {frame_id}/119...")
+
+                # Load frame
+                frame_data = loader.load_frame(frame_id, cache_dir)
+                images = loader.load_images(frame_data['image_paths'])
+
+                # Calculate azimuth for this frame (3° per frame)
+                azimuth = frame_id * (360.0 / 120.0)
+
+                # Create settings for this frame
+                render_settings = RenderSettings(
+                    azimuth=azimuth,
+                    elevation=elevation,
+                    distance=distance,
+                )
+                video_settings = VideoSettings(enabled=False)
+
+                # Run reconstruction
+                result = self.service.reconstruct(
+                    images=images,
+                    extrinsics=frame_data['extrinsics'],
+                    intrinsics=frame_data['intrinsics'],
+                    render_settings=render_settings,
+                    video_settings=video_settings,
+                    output_dir=os.path.join(cache_dir, f"frame_{frame_id:04d}"),
+                )
+
+                # Load rendered frame
+                if result.rendered_image_path:
+                    frame_img = Image.open(result.rendered_image_path)
+                    frame_tensor = torch.from_numpy(np.array(frame_img)).permute(2, 0, 1).float() / 255.0
+                    rendered_frames.append(frame_tensor)
+                else:
+                    rendered_frames.append(torch.zeros(3, 256, 256))
+
+                torch.cuda.empty_cache()
+
+            # Save video
+            from src.misc.image_io import save_video as save_video_frames
+            video_path = os.path.join(cache_dir, "flight_tracking_360.mp4")
+            save_video_frames(rendered_frames, video_path, fps=30)
+
+            return video_path
+
         except Exception as e:
             print(f"Flight tracking error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
 
 def create_demo(runner: GradioRunner) -> gr.Blocks:
     """Create the Gradio demo interface."""
-    
 
     with gr.Blocks(
         analytics_enabled=False,
@@ -314,8 +315,7 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
             with gr.Column(scale=1):
                 # Example loading section
                 gr.Markdown("### Load Example from Dataset")
-                
-                # UUID dropdown selection
+
                 uuid_dropdown = gr.Dropdown(
                     choices=HARDCODED_UUIDS,
                     label="Select UUID",
@@ -323,7 +323,7 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     value=None,
                 )
                 load_uuid_btn = gr.Button('Load Selected UUID', variant='primary')
-                
+
                 with gr.Row():
                     load_example_btn = gr.Button('Load Random Example', variant='secondary')
                     example_status = gr.Textbox(
@@ -332,19 +332,19 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                         interactive=False,
                         max_lines=1,
                     )
-                
+
                 # In-the-Wild Frame loading
                 gr.Markdown("### Load In-the-Wild Frame (Frames 0000-0119)")
                 with gr.Row():
                     wild_frame_slider = gr.Slider(
-                        minimum=0, 
-                        maximum=119, 
-                        step=1, 
-                        label="Frame ID", 
+                        minimum=0,
+                        maximum=119,
+                        step=1,
+                        label="Frame ID",
                         value=0
                     )
                     load_wild_btn = gr.Button('Load Wild Frame', variant='primary')
-                
+
                 wild_status = gr.Textbox(
                     label="Wild Status",
                     value="No frame loaded",
@@ -364,10 +364,10 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     height=200,
                 )
 
-                # Monocular depth estimations per input view
+                # Monocular depth per view
                 gr.Markdown("### Monocular Depth Refinement (Depth Anything)")
                 mono_depth_gallery = gr.Gallery(
-                    label='Monocular Depth Refinement per Input View (DPT upsampler output)',
+                    label='Monocular Depth Refinement per Input View',
                     type="filepath",
                     file_types=['image'],
                     show_label=True,
@@ -383,7 +383,7 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     enable_video = gr.Checkbox(
                         label="Generate 360° rotation videos",
                         value=True,
-                        info="Generate RGB, depth, and silhouette videos (slower)",
+                        info="Generate RGB, depth, and silhouette videos",
                     )
                     num_video_frames = gr.Slider(
                         minimum=30,
@@ -397,20 +397,19 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                 enable_flight_tracking = gr.Checkbox(
                     label="Enable 360° Flight Tracking",
                     value=False,
-                    info="Generate a video of the object moving across all 120 frames with a rotating 360° viewpoint (3°/frame). Takes several minutes.",
+                    info="Generate rotating viewpoint video across all 120 frames",
                 )
 
-                # Camera Control Sliders
-                gr.Markdown("### 📷 Novel View Camera Settings")
-                gr.Markdown("*Adjust azimuth, elevation, and distance to set the target camera position*")
-                
+                # Camera Control
+                gr.Markdown("### Novel View Camera Settings")
+
                 azimuth_slider = gr.Slider(
                     minimum=0,
                     maximum=360,
                     step=1,
                     value=0,
                     label="Azimuth (degrees)",
-                    info="Horizontal rotation around the object (0° = front, 90° = right, 180° = back)",
+                    info="Horizontal rotation (0° = front, 90° = right)",
                 )
                 elevation_slider = gr.Slider(
                     minimum=-90,
@@ -418,7 +417,7 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     step=1,
                     value=30,
                     label="Elevation (degrees)",
-                    info="Vertical angle (-90° = below, 0° = horizontal, 90° = above). Wild frames auto-set to input camera elevation.",
+                    info="Vertical angle (-90° = below, 0° = horizontal, 90° = above)",
                 )
                 distance_slider = gr.Slider(
                     minimum=0.6,
@@ -426,12 +425,10 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     step=0.05,
                     value=1.0,
                     label="Distance (factor)",
-                    info="Distance from object center (0.6 = close, 1.0 = normal, 1.4 = far)",
+                    info="Distance from object center",
                 )
 
-
-                # Run button
-                run_btn = gr.Button('🚀 Reconstruct', variant='primary', size='lg')
+                run_btn = gr.Button('Reconstruct', variant='primary', size='lg')
 
             with gr.Column(scale=1):
                 # Outputs
@@ -485,17 +482,15 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                     label='Download PLY file',
                 )
 
-        # ============================================================
-        # DEPTH ANALYSIS SECTION
-        # ============================================================
+        # Depth Analysis Section
         gr.Markdown("---")
         gr.Markdown("## Depth Analysis: Monocular vs Multi-View")
         gr.Markdown("""
-        Compare depth estimation methods to evaluate if finetuning the monocular model would help:
-        - **Standalone DA V2**: Pure monocular depth from Depth Anything V2 (like in the notebook)
-        - **Coarse MV Depth**: Multi-view stereo from cost volume matching (1/8 res, upsampled)
-        - **DPT Residual**: Learned refinement from monocular features (positive=closer, negative=farther)
-        - **Final Fused**: Combined depth (coarse + residual) used for 3D reconstruction
+        Compare depth estimation methods:
+        - **Standalone DA V2**: Pure monocular depth from Depth Anything V2
+        - **Coarse MV Depth**: Multi-view stereo from cost volume matching
+        - **DPT Residual**: Learned refinement from monocular features
+        - **Final Fused**: Combined depth used for 3D reconstruction
         - **Ground Truth**: Available for Isaac Sim wild frames
         """)
 
@@ -503,7 +498,7 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
             with gr.Column(scale=1):
                 gr.Markdown("### Standalone Depth Anything V2")
                 standalone_da_gallery = gr.Gallery(
-                    label='Monocular depth (same as notebook)',
+                    label='Monocular depth',
                     type="filepath",
                     columns=5,
                     rows=1,
@@ -560,86 +555,56 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
             with gr.Column(scale=1):
                 gr.Markdown("### Depth Quality Metrics")
                 metrics_display = gr.JSON(
-                    label='Metrics vs GT (lower is better for errors, higher for delta)',
+                    label='Metrics vs GT',
                     value={},
                 )
 
-        # Initialize demo
+        # Event handlers
         demo.load(fn=None, inputs=None, outputs=None)
 
-        # Connect the load UUID button
         load_uuid_btn.click(
             fn=partial(runner.load_selected_uuid, cache_dir="/tmp/depthsplat_examples"),
             inputs=[uuid_dropdown],
             outputs=[image_gallery, example_status],
         )
 
-        # Connect the load random example button
         load_example_btn.click(
             fn=partial(runner.load_random_example, cache_dir="/tmp/depthsplat_examples"),
             inputs=[],
             outputs=[image_gallery, example_status],
         )
 
-        # Connect the load wild frame button
-        # RENDER_DIR = "/home/sandro/thesis/renders/5cams_bird_10m"
-        # RENDER_DIR = "/home/sandro/thesis/renders/5cams_drone_10m"
-        # RENDER_DIR = "/home/sandro/thesis/renders/5cams_bird_50m"
-        RENDER_DIR = "/home/sandro/aeroSplat-4D/renders/5cams_drone_50m"
-        # RENDER_DIR = "/home/sandro/thesis/renders/5cams_bird_100m"
-        # RENDER_DIR = "/home/sandro/thesis/renders/5cams_drone_100m"
-
         load_wild_btn.click(
-            fn=partial(runner.load_wild_frame, render_dir=RENDER_DIR, cache_dir="/tmp/depthsplat_gradio_wild"),
+            fn=partial(runner.load_wild_frame, render_dir=DEFAULT_RENDER_DIR, cache_dir="/tmp/depthsplat_gradio_wild"),
             inputs=[wild_frame_slider],
-            outputs=[image_gallery, wild_status, elevation_slider],  # Also update elevation slider
+            outputs=[image_gallery, wild_status, elevation_slider],
         )
 
-        # Inference using custom camera from 3D control
         def run_inference_wrapper(image_files, azimuth, elevation, distance, video_enabled, n_frames, flight_enabled):
             cache_dir = "/tmp/depthsplat_gradio"
-            print(f"[Gradio] Camera state: azimuth={azimuth}, elevation={elevation}, distance={distance}")
+            print(f"[Gradio] Camera: azimuth={azimuth}, elevation={elevation}, distance={distance}")
 
-            # Run standard inference
             result = runner.run_with_custom_camera(
                 image_files, azimuth, elevation, distance, video_enabled, n_frames, cache_dir
             )
 
-            # Unpack result (8 elements: 7 original + mono_depth_paths)
             (rendered_path, depth_path, silhouette_path, video_rgb, video_depth,
-             video_silhouette, ply_path, mono_depth_paths) = result
+             video_silhouette, ply_path, mono_depth_paths, depth_analysis) = result
 
             # Run flight tracking if enabled
             flight_video = None
             if flight_enabled:
-                print("[Gradio] Starting 360° flight tracking video generation...")
+                print("[Gradio] Starting 360° flight tracking...")
                 flight_video = runner.run_flight_tracking(
-                    render_dir=RENDER_DIR,
+                    render_dir=DEFAULT_RENDER_DIR,
                     elevation=elevation,
                     distance=distance,
                     cache_dir="/tmp/depthsplat_flight_tracking",
                 )
 
-            # Extract depth analysis results from runner
-            depth_analysis = runner.runner._last_depth_analysis if hasattr(runner.runner, '_last_depth_analysis') else {}
-
-            # Format metrics for display
-            raw_metrics = depth_analysis.get('metrics', {})
-            formatted_metrics = {}
-            if raw_metrics:
-                # Format each depth type's metrics
-                for key in ['standalone_da_aligned', 'coarse_mv_aligned', 'final_fused_aligned']:
-                    if key in raw_metrics and raw_metrics[key]:
-                        m = raw_metrics[key]
-                        name = key.replace('_aligned', '').replace('_', ' ').title()
-                        formatted_metrics[name] = {
-                            'AbsRel': f"{m.get('abs_rel', 0):.4f}",
-                            'RMSE': f"{m.get('rmse', 0):.3f}",
-                            'δ<1.25': f"{m.get('delta1', 0):.1f}%",
-                            'δ<1.25²': f"{m.get('delta2', 0):.1f}%",
-                        }
-                # Add note about alignment
-                formatted_metrics['Note'] = 'Metrics computed after scale-shift alignment to GT'
+            # Format metrics
+            raw_metrics = depth_analysis.get('metrics', {}) if depth_analysis else {}
+            formatted_metrics = format_metrics_for_display(raw_metrics) if raw_metrics else {}
 
             return (
                 rendered_path,
@@ -649,18 +614,16 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                 video_depth,
                 video_silhouette,
                 ply_path,
-                mono_depth_paths,  # List of paths for gallery (backward compat)
+                mono_depth_paths,
                 flight_video,
-                # Depth analysis outputs
-                depth_analysis.get('standalone_da_paths', []),
-                depth_analysis.get('coarse_mv_paths', []),
-                depth_analysis.get('residual_paths', []),
-                depth_analysis.get('final_fused_paths', []),
-                depth_analysis.get('gt_paths', []),
+                depth_analysis.get('standalone_da_paths', []) if depth_analysis else [],
+                depth_analysis.get('coarse_mv_paths', []) if depth_analysis else [],
+                depth_analysis.get('residual_paths', []) if depth_analysis else [],
+                depth_analysis.get('final_fused_paths', []) if depth_analysis else [],
+                depth_analysis.get('gt_paths', []) if depth_analysis else [],
                 formatted_metrics,
             )
 
-        # Connect the run button
         run_btn.click(
             fn=run_inference_wrapper,
             inputs=[
@@ -682,7 +645,6 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
                 ply_download,
                 mono_depth_gallery,
                 flight_tracking_video,
-                # Depth analysis outputs
                 standalone_da_gallery,
                 coarse_mv_gallery,
                 residual_gallery,
@@ -693,7 +655,6 @@ def create_demo(runner: GradioRunner) -> gr.Blocks:
             concurrency_id='default_group',
             api_name='run',
         )
-
 
     return demo
 
@@ -729,18 +690,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Check checkpoint exists
     if not os.path.exists(args.checkpoint):
         print(f"Error: Checkpoint not found at {args.checkpoint}")
         print("Please provide a valid checkpoint path with --checkpoint")
         sys.exit(1)
 
-    # Initialize runner
     print("Initializing DepthSplat model...")
     torch.set_float32_matmul_precision("medium")
     runner = GradioRunner(args.checkpoint, args.config)
 
-    # Create and launch demo
     demo = create_demo(runner)
     demo.queue().launch(
         share=args.share,
