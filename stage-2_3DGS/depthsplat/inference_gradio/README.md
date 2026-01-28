@@ -86,10 +86,7 @@ inference_gradio/
 ├── app.py              # Main Gradio application (uses inference_backend)
 ├── README.md           # This file
 ├── requirements.txt    # Python dependencies
-├── runner.py           # Legacy (now uses inference_backend)
-├── camera_utils.py     # Legacy (now in inference_backend)
-├── data_loader.py      # Legacy (now in inference_backend)
-└── services/           # Legacy (now in inference_backend)
+└── debugging/          # Development/debugging scripts
 ```
 
 ## Backend Service
