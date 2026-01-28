@@ -8,37 +8,37 @@
 # List asset names from asset_config.yaml (or "all" to render everything)
 assets:
   # Birds
-  # - "bald-eagle-med-poly.usdc"
-  # - "Crow - Hello Neighbor 2.usdc"
-  # - "20 Owl_merged.usdc"
-  - "Grus-nigricollis.usdc"
-  # - "Paloma_animada.usdc"
-  # - "Quetzal Animation.usdc"
-  # - "cacau.usdc"
-  # - "crow-fly.usdc"
-  # - "dove-bird-rigged.usdc"
-  # - "KingFisher.usdc"
-  # - "owl.usdc"
-  # - "parrot.usdc"
-  # - "phoenix.usdc"
-  # - "animated-bird-pigeon.usdc"
-  # - "Seagull.usdc"
-  # - "animated_eagle.usdc"
-  # - "animated-stylized-parrot-3d-animal-model.usdc"
-  - "animated-stylized-pigeon-3d-animal-model.usdc"
-  # - "animated-stylized-tukan-3d-animal-model.usdc"
-  # - "british_show_racer_pigeon_bird.usdc"
-  # - "canada-goose-in-flight.usdc"
-  # - "crow.usdc"
-  # - "jin-diao-vulture-kung-fu-panda-chi-master.usdc"
-  # - "pigeon-white.usdc"
+  # # - "bald-eagle-med-poly.usdc"
+  # # - "Crow - Hello Neighbor 2.usdc"
+  # # - "20 Owl_merged.usdc"
+  # - "Grus-nigricollis.usdc"
+  # # - "Paloma_animada.usdc"
+  # # - "Quetzal Animation.usdc"
+  # # - "cacau.usdc"
+  # # - "crow-fly.usdc"
+  # # - "dove-bird-rigged.usdc"
+  # # - "KingFisher.usdc"
+  # # - "owl.usdc"
+  # # - "parrot.usdc"
+  # # - "phoenix.usdc"
+  # # - "animated-bird-pigeon.usdc"
+  # # - "Seagull.usdc"
+  # # - "animated_eagle.usdc"
+  # # - "animated-stylized-parrot-3d-animal-model.usdc"
+  # - "animated-stylized-pigeon-3d-animal-model.usdc"
+  # # - "animated-stylized-tukan-3d-animal-model.usdc"
+  # # - "british_show_racer_pigeon_bird.usdc"
+  # # - "canada-goose-in-flight.usdc"
+  # # - "crow.usdc"
+  # # - "jin-diao-vulture-kung-fu-panda-chi-master.usdc"
+  # # - "pigeon-white.usdc"
 
-  - "realistic-animated-eagle-3d-model.usdc"
-  - "realistic-animated-owl-3d-model.usdc"
-  - "realistic-animated-seagull-3d-model.usdc"
-  # - "realistic-animated-woodpecker-3d-model.usdc"
-  # - "Silver Ear Bird.usdc"
-  - "white-eagle-animation-fast-fly.usdc"
+  # - "realistic-animated-eagle-3d-model.usdc"
+  # - "realistic-animated-owl-3d-model.usdc"
+  # - "realistic-animated-seagull-3d-model.usdc"
+  # # - "realistic-animated-woodpecker-3d-model.usdc"
+  # # - "Silver Ear Bird.usdc"
+  # - "white-eagle-animation-fast-fly.usdc"
 
   # Drones
   # - "AGRICULTURE HEXACOPTER DRONE.usdc"
@@ -165,7 +165,7 @@ execution:
   max_parallel: 1
 
   # Verbose logging
-  verbose: true
+  verbose: false
 
   # Warmup frames before capture
   warmup_frames: 0

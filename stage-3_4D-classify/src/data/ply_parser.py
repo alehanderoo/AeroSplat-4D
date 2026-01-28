@@ -221,8 +221,9 @@ def parse_ply(filepath: Path, device: str = 'cpu') -> GaussianCloud:
         # Higher order SH (indices 0-44 for f_rest)
         sh_rest_names = [f'f_rest_{i}' for i in range(45)]
         sh_rest_list = []
+        property_names = vertex.data.dtype.names
         for name in sh_rest_names:
-            if name in vertex.dtype.names:
+            if name in property_names:
                 sh_rest_list.append(vertex[name])
 
         if len(sh_rest_list) == 45:

@@ -41,7 +41,8 @@ from inference_backend import (
 
 # Default paths
 DEFAULT_DATA_DIR = "/mnt/raid0/objaverse/test"
-DEFAULT_RENDER_DIR = "/home/sandro/aeroSplat-4D/renders/5cams_drone_50m"
+# DEFAULT_RENDER_DIR = "/home/sandro/aeroSplat-4D/renders/5cams_drone_50m"
+DEFAULT_RENDER_DIR = "/home/sandro/aeroSplat-4D/renders/batch/rivermark_10m_15h_ip_cam_2k_DJI_Inspire_3"
 
 _HEADER_ = '''
 # DepthSplat Object-Centric 3D Gaussian Splatting Demo
