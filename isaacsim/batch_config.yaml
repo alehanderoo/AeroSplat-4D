@@ -8,44 +8,70 @@
 # List asset names from asset_config.yaml (or "all" to render everything)
 assets:
   # Birds
-  - "bald-eagle-med-poly.usdc"
-  - "Crow - Hello Neighbor 2.usdc"
-  - "crow-fly.usdc"
-  - "dove-bird-rigged.usdc"
-  - "owl.usdc"
-  - "pigeon.usdc"
-  - "Seagull.usdc"
-  - "parrot.usdc"
-  - "cacao.usdc"
-  - "20 Owl_merged.usdc"
+  # - "bald-eagle-med-poly.usdc"
+  # - "Crow - Hello Neighbor 2.usdc"
+  # - "20 Owl_merged.usdc"
   - "Grus-nigricollis.usdc"
-  - "KingFisher.usdc"
-  - "Paloma_animada.usdc"
-  - "phoenix.usdc"
-  - "Quetzal Animation.usdc"
-  # Dragons (treated as birds for classification)
-  - "snow-dragon.usdc"
-  - "fire-fragon.usdc"
-  - "dragon-flying-cycle.usdc"
-  - "dragon-flying.usdc"
-  - "dragon-flying-test.usdc"
-  - "shadow-dragon.usdc"
+  # - "Paloma_animada.usdc"
+  # - "Quetzal Animation.usdc"
+  # - "cacau.usdc"
+  # - "crow-fly.usdc"
+  # - "dove-bird-rigged.usdc"
+  # - "KingFisher.usdc"
+  # - "owl.usdc"
+  # - "parrot.usdc"
+  # - "phoenix.usdc"
+  # - "animated-bird-pigeon.usdc"
+  # - "Seagull.usdc"
+  # - "animated_eagle.usdc"
+  # - "animated-stylized-parrot-3d-animal-model.usdc"
+  - "animated-stylized-pigeon-3d-animal-model.usdc"
+  # - "animated-stylized-tukan-3d-animal-model.usdc"
+  # - "british_show_racer_pigeon_bird.usdc"
+  # - "canada-goose-in-flight.usdc"
+  # - "crow.usdc"
+  # - "jin-diao-vulture-kung-fu-panda-chi-master.usdc"
+  # - "pigeon-white.usdc"
+
+  - "realistic-animated-eagle-3d-model.usdc"
+  - "realistic-animated-owl-3d-model.usdc"
+  - "realistic-animated-seagull-3d-model.usdc"
+  # - "realistic-animated-woodpecker-3d-model.usdc"
+  # - "Silver Ear Bird.usdc"
+  - "white-eagle-animation-fast-fly.usdc"
+
   # Drones
-  - "Low-poly FPV.usdc"
-  - "FPV-drone.usdc"
-  - "FPV-drone-with-a.usdc"
-  - "DJI Inspire 2.usdc"
+  # - "AGRICULTURE HEXACOPTER DRONE.usdc"
+  # - "dji_drone_dji_drone.usdc"
+  # - "DJI Inspire 2.usdc"
   - "DJI Inspire 3.usdc"
-  - "DJI Mini 3 Pro.usdc"
-  - "dji phantom 3.usdc"
   - "quadcopter-dji-matrice-300-rtk.usdc"
-  - "Dji Mavic 3 Classic Drone.usdc"
-  - "Untitled.usdc"  # DJI Mavic 2
-  - "Race Drone - Hunter.usdc"
-  - "Race Drone - Scout.usdc"
-  - "AGRICULTURE HEXACOPTER DRONE.usdc"
-  - "drone-m600.usdc"
-  - "hexacopter-15.usdc"
+  # - "Dji Mavic 3 Classic Drone.usdc"
+  # - "DJI Mini 3 Pro.usdc"
+  # - "dji phantom 3.usdc"
+  # - "Drona+5+inch.usdc"
+  # - "drone-m600.usdc"
+  # - "Drone v12.usdc"
+  # - "FPV-drone.usdc"
+  # - "fpv-drone-without-a.usdc"
+  # - "Low-poly FPV.usdc"
+  # - "hexacopter-15.usdc"
+  # - "hexa-copter-4.snapshot.6.usdc"
+  # - "quadcopter_1.usdc"
+  # - "Quadcopter Assembly.usdc"
+  # - "Quadcopter Drone by Atulya Vaibhav Pandey.usdc"
+  # - "Quadcopter Drone MonoBody.usdc"
+
+  - "quadcoptor drone assymbly.usdc"
+  # - "Race Drone - Hunter.usdc"
+  # - "Race Drone - Scout.usdc"
+  - "Tarot-650.usdc"
+  # - "VERSI NUHINA HINU HYA.usdc"
+  # - "X4_Quad.usdc"
+  # - "ZD1250.usdc"
+  # - "DRONEE.usdc"
+  - "7Kg VTOL UAV.usdc"
+  # - "AltAir_with additional rotor arm bearings_quadcopter.usdc"
 
 # =====================================================================
 # Scene Configuration Sweeps
@@ -54,17 +80,17 @@ assets:
 # NOTE: Large scenes like Rivermark can cause GPU memory issues. Use simpler scenes for batch rendering.
 scenes:
   # Simple warehouse - lightweight, good for testing
-  - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Simple_Warehouse/warehouse.usd"
-    name: "warehouse"
+  # - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Simple_Warehouse/warehouse.usd"
+  #   name: "warehouse"
   # Simple room - very lightweight
-  - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Simple_Room/simple_room.usd"
-    name: "simple_room"
+  # - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Simple_Room/simple_room.usd"
+  #   name: "simple_room"
   # Grid room - minimal scene for testing
-  - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Grid/default_environment.usd"
-    name: "grid"
+  # - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Grid/default_environment.usd"
+  #   name: "grid"
   # Rivermark - HEAVY, may cause GPU memory issues on complex renders
-  # - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Environments/Outdoor/Rivermark/rivermark.usd"
-  #   name: "rivermark"
+  - url: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Environments/Outdoor/Rivermark/rivermark.usd"
+    name: "rivermark"
 
 # =====================================================================
 # Camera Rig Parameters
@@ -72,20 +98,16 @@ scenes:
 # Camera rig diameter in meters (distance from cameras to center)
 side_meters:
   - 10.0
-  - 20.0
-  - 30.0
+  # - 20.0
+  # - 30.0
 
 # Camera height above ground (meters)
 cam_heights:
-  - 5.0
   - 7.0
-  - 10.0
 
 # Flight height offset from waypoint (meters)
 flight_height_offsets:
-  - 10.0
   - 15.0
-  - 20.0
 
 # Camera rotation offset (radians, for varying camera angles)
 rotation_offsets:
@@ -126,11 +148,11 @@ render:
 # =====================================================================
 output:
   # Base directory for all renders
-  base_path: "/home/sandro/aeroSplat-4D/renders"
+  base_path: "/home/sandro/aeroSplat-4D/renders/batch"
 
   # Output folder naming pattern (available variables: asset, scene, side_m, height_m, cam_type)
-  # Example output: renders/bald-eagle-med-poly_rivermark_10m_15h_ip_cam_2k/
-  folder_pattern: "{asset}_{scene}_{side_m}m_{height_m}h_{cam_type}"
+  # Example output: renders/rivermark_10m_15h_ip_cam_2k_bald-eagle-med-poly/
+  folder_pattern: "{scene}_{side_m}m_{height_m}h_{cam_type}_{asset}"
 
 # =====================================================================
 # Execution Settings

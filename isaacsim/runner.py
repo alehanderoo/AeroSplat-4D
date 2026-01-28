@@ -250,6 +250,53 @@ def load_config(config_path=None):
         return None
 
 
+def apply_asset_config(cfg, asset_name=None):
+    """Apply asset configuration from asset_config.yaml.
+
+    This loads the asset configuration for the specified asset (or the one in cfg)
+    and merges it into the drone config. Call this after overriding the asset_name
+    to ensure the correct asset data is loaded.
+
+    Args:
+        cfg: The main configuration dict
+        asset_name: Optional asset name override. If None, uses cfg["drone"]["asset_name"]
+
+    Returns:
+        Updated cfg dict with asset config merged
+    """
+    asset_config_path = ROOT / "asset_config.yaml"
+    if not asset_config_path.exists():
+        print(f"[RUNNER] Warning: asset_config.yaml not found at {asset_config_path}")
+        return cfg
+
+    try:
+        with open(asset_config_path, 'r') as f:
+            asset_configs = yaml.safe_load(f)
+    except Exception as e:
+        print(f"[RUNNER] ERROR: Failed to parse asset_config.yaml: {e}")
+        return cfg
+
+    drone_cfg = cfg.get("drone", {})
+    if asset_name is None:
+        asset_name = drone_cfg.get("asset_name")
+
+    if asset_name and asset_configs and asset_name in asset_configs:
+        print(f"[RUNNER] Applying asset config for: {asset_name}")
+        asset_data = asset_configs[asset_name]
+        # Merge asset_data into drone_cfg (asset data takes precedence)
+        drone_cfg.update(asset_data)
+        # Ensure asset_name is preserved
+        drone_cfg["asset_name"] = asset_name
+        cfg["drone"] = drone_cfg
+    elif asset_name:
+        print(f"[RUNNER] WARNING: Asset '{asset_name}' not found in asset_config.yaml")
+
+    # Apply bird parameters after asset config is loaded
+    cfg = _apply_bird_parameters(cfg)
+
+    return cfg
+
+
 def _apply_bird_parameters(cfg):
     """Apply wingspan and flap_frequency for birds.
 

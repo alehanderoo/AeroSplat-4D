@@ -61,23 +61,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Find Isaac Sim installation (check common locations)
-ISAAC_SIM_PATH="${ISAAC_SIM_PATH:-}"
+ISAAC_SIM_PATH="$HOME/isaacsim"
 
-if [ -z "$ISAAC_SIM_PATH" ] || [ ! -d "$ISAAC_SIM_PATH" ]; then
-    # Check common installation locations
-    for candidate in \
-        "$HOME/isaacsim" \
-        "$HOME/.local/share/ov/pkg/isaac-sim-4.2.0" \
-        "$HOME/.local/share/ov/pkg/isaac-sim-4.5.0" \
-        "$HOME/.local/share/ov/pkg/isaac-sim-4.1.0" \
-        "$HOME/.local/share/ov/pkg/isaac-sim-4.0.0" \
-        "/isaac-sim"; do
-        if [ -d "$candidate" ] && [ -f "$candidate/python.sh" ]; then
-            ISAAC_SIM_PATH="$candidate"
-            break
-        fi
-    done
-fi
 
 if [ ! -d "$ISAAC_SIM_PATH" ]; then
     echo "ERROR: Could not find Isaac Sim installation"

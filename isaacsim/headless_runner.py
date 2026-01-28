@@ -278,7 +278,7 @@ def main():
         sys.path.insert(0, str(SCRIPT_DIR))
 
     import yaml
-    from runner import load_config, _refresh_workflow_modules, _run_workflow_async
+    from runner import load_config, apply_asset_config, _refresh_workflow_modules, _run_workflow_async
 
     # Refresh modules to ensure they're loaded
     if not _refresh_workflow_modules(show_help=True):
@@ -299,6 +299,11 @@ def main():
 
     # Apply command line overrides
     cfg = apply_overrides(cfg, args)
+
+    # Re-apply asset config if asset was overridden
+    # This ensures the correct USD path, scale, etc. are loaded for the new asset
+    if args.asset:
+        cfg = apply_asset_config(cfg, args.asset)
 
     print(f"[HEADLESS] Configuration loaded", flush=True)
     print(f"[HEADLESS] Asset: {cfg.get('drone', {}).get('asset_name', 'N/A')}", flush=True)

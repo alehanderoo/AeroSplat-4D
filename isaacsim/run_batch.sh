@@ -7,28 +7,12 @@
 #   ./run_batch.sh --dry-run                # Preview what would be rendered
 #   ./run_batch.sh --asset-type bird        # Render only birds
 #   ./run_batch.sh --asset-type drone       # Render only drones
-#   ./run_batch.sh --list-assets            # List available assets
+#   ./run_batch.sh --list-assets            # List available assets from asset_config.yaml
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Find Isaac Sim installation (check common locations)
-ISAAC_SIM_PATH="${ISAAC_SIM_PATH:-}"
-
-if [ -z "$ISAAC_SIM_PATH" ] || [ ! -d "$ISAAC_SIM_PATH" ]; then
-    # Check common installation locations
-    for candidate in \
-        "$HOME/isaacsim" \
-        "$HOME/.local/share/ov/pkg/isaac-sim-4.2.0" \
-        "$HOME/.local/share/ov/pkg/isaac-sim-4.5.0" \
-        "$HOME/.local/share/ov/pkg/isaac-sim-4.1.0" \
-        "$HOME/.local/share/ov/pkg/isaac-sim-4.0.0" \
-        "/isaac-sim"; do
-        if [ -d "$candidate" ] && [ -f "$candidate/python.sh" ]; then
-            ISAAC_SIM_PATH="$candidate"
-            break
-        fi
-    done
-fi
+ISAAC_SIM_PATH="$HOME/isaacsim"
 
 if [ ! -d "$ISAAC_SIM_PATH" ]; then
     echo "ERROR: Could not find Isaac Sim installation"

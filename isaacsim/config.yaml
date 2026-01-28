@@ -15,8 +15,8 @@ scene:
   # NOTE: Large scenes like Rivermark can cause GPU memory issues in headless mode.
   # Use Simple_Warehouse for headless batch rendering.
   # path: "/home/sandro/thesis/assets/AECO_CityTowerDemoPack_NVD@10011/Demos/AEC/TowerDemo/CityTowerDemopack/World_CityTowerDemopack.usd"
-  # path: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Environments/Outdoor/Rivermark/rivermark.usd"
-  path: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Simple_Warehouse/warehouse.usd"
+  path: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Environments/Outdoor/Rivermark/rivermark.usd"
+  # path: "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.2/Isaac/Environments/Simple_Warehouse/warehouse.usd"
   
   # Prim path where the scene will be loaded
   prim_path: "/World/CityScene"
@@ -74,6 +74,7 @@ cameras:
 # =====================================================================
 drone:
   # Asset to use (must match a key in asset_config.yaml)
+  asset_name: "Tarot-650.usdc"
   # asset_name: "bald-eagle-med-poly.usdc"
   # asset_name: "Crow - Hello Neighbor 2.usdc"
   # asset_name: "20 Owl_merged.usdc"
@@ -87,7 +88,6 @@ drone:
   # asset_name: "dragon-flying-test.usdc"
   # asset_name: "fire-fragon.usdc"
 
-  asset_name: "snow-dragon.usdc"
   
   # Path to the object USD/FBX file to load
   # Asset type is auto-detected from the file path (keywords: bird, eagle, drone, etc.)
