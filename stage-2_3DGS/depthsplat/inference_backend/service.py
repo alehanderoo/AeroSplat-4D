@@ -639,7 +639,7 @@ class InferenceService:
         h: int,
         w: int,
     ):
-        """Export Gaussians to PLY file."""
+        """Export Gaussians to PLY file with opacity filtering."""
         from scipy.spatial.transform import Rotation as R
         print(f"Exporting PLY to: {ply_path}")
 
@@ -650,9 +650,24 @@ class InferenceService:
             gaussians.means, "() (v h w spp) xyz -> h w spp v xyz", v=v, h=h, w=w
         )
 
+        # Border trim mask
         mask = torch.zeros_like(means[..., 0], dtype=torch.bool)
         GAUSSIAN_TRIM = self.config.inference.gaussian_trim_border
         mask[GAUSSIAN_TRIM:-GAUSSIAN_TRIM, GAUSSIAN_TRIM:-GAUSSIAN_TRIM, :, :] = 1
+
+        # Reshape opacities to match spatial layout
+        opacities_spatial = rearrange(
+            gaussians.opacities, "() (v h w spp) -> h w spp v", v=v, h=h, w=w
+        )
+
+        # Combine border mask with opacity threshold mask
+        opacity_threshold = self.config.inference.min_opacity_threshold
+        opacity_mask = opacities_spatial > opacity_threshold
+        mask = mask & opacity_mask
+
+        num_before = (torch.zeros_like(means[..., 0], dtype=torch.bool).numel())
+        num_after = mask.sum().item()
+        print(f"  Opacity filter (threshold={opacity_threshold}): {num_after} Gaussians kept")
 
         def trim(element):
             element = rearrange(

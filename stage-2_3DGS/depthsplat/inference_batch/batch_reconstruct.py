@@ -42,8 +42,8 @@ from inference_backend import (
 # Default paths
 DEFAULT_INPUT_DIR = "/home/sandro/aeroSplat-4D/renders/batch"
 DEFAULT_OUTPUT_DIR = "/home/sandro/aeroSplat-4D/stage-2_3DGS/output"
-DEFAULT_CHECKPOINT = str(DEPTHSPLAT_ROOT / "outputs/objaverse_white/checkpoints/epoch_0-step_65000.ckpt")
-DEFAULT_CONFIG = "objaverse_white"
+DEFAULT_CHECKPOINT = "/home/sandro/aeroSplat-4D/stage-2_3DGS/depthsplat/outputs/objaverse_white_small_gauss/checkpoints/epoch_0-step_100000.ckpt"
+DEFAULT_CONFIG = "objaverse_white_small_gauss"
 
 
 @dataclass

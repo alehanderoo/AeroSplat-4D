@@ -63,8 +63,25 @@ def export_ply(
     PlyData([PlyElement.describe(elements, "vertex")]).write(path)
     
 
-def save_gaussian_ply(gaussians, visualization_dump, example, save_path):
+def save_gaussian_ply(
+    gaussians,
+    visualization_dump,
+    example,
+    save_path,
+    gaussian_trim: int = 8,
+    min_opacity_threshold: float = 0.0,
+):
+    """
+    Export Gaussians to PLY file with optional filtering.
 
+    Args:
+        gaussians: Gaussian model from encoder
+        visualization_dump: Dict containing scales and rotations
+        example: Batch dict with context/target
+        save_path: Output PLY path
+        gaussian_trim: Pixels to trim from borders (default: 8)
+        min_opacity_threshold: Filter Gaussians below this opacity (default: 0.0, no filter)
+    """
     v, _, h, w = example["context"]["image"].shape[1:]
 
     # Transform means into camera space.
@@ -75,8 +92,16 @@ def save_gaussian_ply(gaussians, visualization_dump, example, save_path):
     # Create a mask to filter the Gaussians. throw away Gaussians at the
     # borders, since they're generally of lower quality.
     mask = torch.zeros_like(means[..., 0], dtype=torch.bool)
-    GAUSSIAN_TRIM = 8
+    GAUSSIAN_TRIM = gaussian_trim
     mask[GAUSSIAN_TRIM:-GAUSSIAN_TRIM, GAUSSIAN_TRIM:-GAUSSIAN_TRIM, :, :] = 1
+
+    # Apply opacity threshold filter if specified
+    if min_opacity_threshold > 0.0:
+        opacities_spatial = rearrange(
+            gaussians.opacities, "() (v h w spp) -> h w spp v", v=v, h=h, w=w
+        )
+        opacity_mask = opacities_spatial > min_opacity_threshold
+        mask = mask & opacity_mask
 
     def trim(element):
         element = rearrange(

@@ -535,3 +535,44 @@ now that you know everything about the changes made to depthsplat. Do we actuall
   - If decoder doesn't output alpha → modify decoder to output alpha, then use loss_mask                                                                                                                                                                  
                                                                                                                                                                                                                                                           
   The silhouette loss is essentially a "poor man's mask loss" for when you can't access the actual rendered opacity. 
+
+
+
+
+
+
+### Changes Made (2025-01-29)
+
+**1. `inference_backend/config.py`**
+```python
+min_opacity_threshold: float = 0.1  # Filter out Gaussians below this opacity
+```
+
+**2. `inference_backend/service.py:_export_ply()`**
+- Reshapes opacities to spatial layout: `(v h w spp)`
+- Creates opacity mask: `opacities_spatial > threshold`
+- Combines with border trim mask: `mask = mask & opacity_mask`
+- Logs number of Gaussians kept after filtering
+
+**3. `src/model/ply_export.py:save_gaussian_ply()`**
+- Added `gaussian_trim` and `min_opacity_threshold` parameters
+- Applies opacity filtering when `min_opacity_threshold > 0.0`
+- Backward compatible (default threshold = 0.0)
+
+### Usage
+
+```python
+# Via InferenceService (uses config default 0.1)
+service = InferenceService(config)
+result = service.reconstruct(images, extrinsics, intrinsics)
+
+# Override threshold in config
+config.inference.min_opacity_threshold = 0.2
+
+# Via standalone function
+save_gaussian_ply(
+    gaussians, visualization_dump, example, save_path,
+    gaussian_trim=8,
+    min_opacity_threshold=0.1,
+)
+```

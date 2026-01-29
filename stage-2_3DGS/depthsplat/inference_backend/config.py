@@ -54,6 +54,7 @@ class InferenceConfig:
     enable_depth_analysis: bool = True
     enable_ply_export: bool = True
     gaussian_trim_border: int = 8
+    min_opacity_threshold: float = 0.01  # Filter out Gaussians below this opacity
     target_radius: float = 2.0
     training_fx_norm: float = 1.0723  # 50 degree FOV
 
